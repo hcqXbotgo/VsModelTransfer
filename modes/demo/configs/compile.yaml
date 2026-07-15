@@ -1,0 +1,4 @@
+model: modes/demo/model/yolov5s.onnx
+quantize: modes/demo/outputs/quant/yolov5s_quant_param.yaml
+output: modes/demo/outputs/compile/yolov5s.mgz
+optimze_level: 1

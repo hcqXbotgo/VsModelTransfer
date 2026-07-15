@@ -1,0 +1,38 @@
+model:
+  onnx_model: modes/demo/outputs/quant/yolov5s_deploy_model.onnx
+  quant_param: modes/demo/outputs/quant/yolov5s_quant_param.yaml
+
+work_mode: Metric
+
+dataset:
+  eval:
+    type: Custom
+    loader: common/evaluation/coco_loader.py
+    parameters:
+      ann_file: modes/demo/datasets/evaluation/annotations/instances_val2017.json
+      img_dir: modes/demo/datasets/evaluation/images
+      normalize_mean: [0.0, 0.0, 0.0]
+      normalize_std: [1.0, 1.0, 1.0]
+      resize_size: [640, 640]
+      crop_size: 640
+      num_samples: 10
+      batch_size: 1
+      num_workers: 4
+
+metric:
+  type: extern_python
+  source: common/evaluation/yolo_coco_metric.py
+  parameters:
+    annfile: modes/demo/datasets/evaluation/annotations/instances_val2017.json
+    img_size: 640
+    decode_mode: yolov5
+    conf_threshold: 0.001
+    iou_threshold: 0.65
+    img_dir: modes/demo/datasets/evaluation/images
+    vis_dir: modes/demo/outputs/evaluation/visualizations
+    vis_num: 10
+    vis_conf_threshold: 0.25
+    vis_max_boxes: 100
+  result_file: metric_result.csv
+
+out_dir: modes/demo/outputs/evaluation

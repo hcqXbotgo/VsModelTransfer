@@ -1,0 +1,32 @@
+# Python/editor caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.idea/
+.vscode/
+.DS_Store
+
+# Local environments and logs
+.venv/
+venv/
+*.log
+
+# Models and compiler binaries are kept locally, not in regular Git.
+*.onnx
+*.mgz
+
+# Downloaded archives
+*.zip
+*.tar
+*.tar.gz
+
+# Reproducible quantization/evaluation/compile outputs.
+modes/*/outputs/**
+!modes/*/outputs/**/
+!modes/*/outputs/**/.gitkeep
+
+# Generated reports and tabular metrics
+modes/*/datasets/reports/**
+!modes/*/datasets/reports/.gitkeep
+*.csv

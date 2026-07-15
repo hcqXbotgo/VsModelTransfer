@@ -1,0 +1,10 @@
+name: soccer_3328
+format: coco_detection
+model_input_size: [1024, 3328]
+model_color_order: RGB
+evaluation_annotations: evaluation/annotations/instances.json
+evaluation_images: evaluation/images
+draft_annotations: draft/annotations/instances.json
+draft_images: draft/images
+calibration_images: calibration/images
+evaluation_policy: only_review_status_approved
