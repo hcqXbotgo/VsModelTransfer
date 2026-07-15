@@ -52,6 +52,46 @@
       "height": 427,
       "source": "coco_val2017",
       "review_status": "approved"
+    },
+    {
+      "id": 7,
+      "file_name": "clip-0_frame-5266.jpg",
+      "width": 3840,
+      "height": 1920,
+      "source": "manual_coco_annotation",
+      "review_status": "approved"
+    },
+    {
+      "id": 8,
+      "file_name": "clip-0_frame-94.jpg",
+      "width": 3840,
+      "height": 1920,
+      "source": "manual_coco_annotation",
+      "review_status": "approved"
+    },
+    {
+      "id": 9,
+      "file_name": "clip-15_frame-3141.jpg",
+      "width": 3840,
+      "height": 1920,
+      "source": "manual_coco_annotation",
+      "review_status": "approved"
+    },
+    {
+      "id": 10,
+      "file_name": "clip-31_frame-6479.jpg",
+      "width": 3840,
+      "height": 1920,
+      "source": "manual_coco_annotation",
+      "review_status": "approved"
+    },
+    {
+      "id": 11,
+      "file_name": "clip-5_frame-1051.jpg",
+      "width": 3840,
+      "height": 1920,
+      "source": "manual_coco_annotation",
+      "review_status": "approved"
     }
   ],
   "annotations": [
@@ -8168,6 +8208,1506 @@
       "category_id": 1,
       "id": 73,
       "source": "coco_ground_truth"
+    },
+    {
+      "id": 74,
+      "image_id": 7,
+      "category_id": 1,
+      "bbox": [
+        328.5385437011719,
+        666.6261596679688,
+        170.85484313964844,
+        441.5729675292969
+      ],
+      "area": 75444.88010192709,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 75,
+      "image_id": 7,
+      "category_id": 1,
+      "bbox": [
+        2311.66259765625,
+        469.5369567871094,
+        62.09238815307617,
+        241.0608673095703
+      ],
+      "area": 14968.04494150303,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 76,
+      "image_id": 7,
+      "category_id": 1,
+      "bbox": [
+        1864.05517578125,
+        609.231689453125,
+        107.15648651123047,
+        361.7431945800781
+      ],
+      "area": 38763.12975054956,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 77,
+      "image_id": 7,
+      "category_id": 1,
+      "bbox": [
+        239.74562072753906,
+        554.1458740234375,
+        87.5982894897461,
+        199.08663940429688
+      ],
+      "area": 17439.64907207829,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 78,
+      "image_id": 7,
+      "category_id": 1,
+      "bbox": [
+        3009.264892578125,
+        390.69830322265625,
+        28.60865592956543,
+        97.70783233642578
+      ],
+      "area": 2795.2897569364723,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 79,
+      "image_id": 7,
+      "category_id": 1,
+      "bbox": [
+        2068.963623046875,
+        452.00457763671875,
+        78.9462661743164,
+        141.72181701660156
+      ],
+      "area": 11188.408288900391,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 80,
+      "image_id": 7,
+      "category_id": 1,
+      "bbox": [
+        3339.483642578125,
+        389.0191650390625,
+        20.684019088745117,
+        63.976070404052734
+      ],
+      "area": 1323.2822614603283,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 81,
+      "image_id": 7,
+      "category_id": 1,
+      "bbox": [
+        1133.4854736328125,
+        456.5447998046875,
+        76.81851959228516,
+        133.90382385253906
+      ],
+      "area": 10286.293516098172,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 82,
+      "image_id": 7,
+      "category_id": 1,
+      "bbox": [
+        2028.38525390625,
+        451.6834716796875,
+        118.35784912109375,
+        140.9886474609375
+      ],
+      "area": 16687.113063968718,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 83,
+      "image_id": 7,
+      "category_id": 1,
+      "bbox": [
+        651.0254516601562,
+        479.46270751953125,
+        95.4776611328125,
+        198.719482421875
+      ],
+      "area": 18973.27140316367,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 84,
+      "image_id": 7,
+      "category_id": 41,
+      "bbox": [
+        1854.8092041015625,
+        952.2951049804688,
+        70.72256469726562,
+        32.243988037109375
+      ],
+      "area": 2280.3775300523266,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 85,
+      "image_id": 7,
+      "category_id": 1,
+      "bbox": [
+        492.41204833984375,
+        426.5646667480469,
+        102.03036499023438,
+        146.5791473388672
+      ],
+      "area": 14955.52390294196,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 86,
+      "image_id": 7,
+      "category_id": 1,
+      "bbox": [
+        809.2172241210938,
+        465.9819641113281,
+        54.983604431152344,
+        118.87591552734375
+      ],
+      "area": 6536.2263157465495,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 87,
+      "image_id": 7,
+      "category_id": 1,
+      "bbox": [
+        2019.8311767578125,
+        450.98370361328125,
+        70.3054428100586,
+        141.67587280273438
+      ],
+      "area": 9960.584972897777,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 88,
+      "image_id": 8,
+      "category_id": 1,
+      "bbox": [
+        365.81475830078125,
+        563.5236206054688,
+        131.11500549316406,
+        390.0563049316406
+      ],
+      "area": 51142.23456375534,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 89,
+      "image_id": 8,
+      "category_id": 1,
+      "bbox": [
+        1368.7540283203125,
+        472.85906982421875,
+        114.32982635498047,
+        330.3859558105469
+      ],
+      "area": 37772.968957944075,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 90,
+      "image_id": 8,
+      "category_id": 1,
+      "bbox": [
+        1225.9095458984375,
+        622.7634887695312,
+        192.60220336914062,
+        430.1125183105469
+      ],
+      "area": 82840.61872326117,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 91,
+      "image_id": 8,
+      "category_id": 1,
+      "bbox": [
+        736.2929077148438,
+        464.9476318359375,
+        93.22624206542969,
+        321.6719970703125
+      ],
+      "area": 29988.271464547142,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 92,
+      "image_id": 8,
+      "category_id": 1,
+      "bbox": [
+        1085.13232421875,
+        452.4928894042969,
+        94.06694030761719,
+        168.15228271484375
+      ],
+      "area": 15817.570740726776,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 93,
+      "image_id": 8,
+      "category_id": 1,
+      "bbox": [
+        2741.0478515625,
+        404.7574462890625,
+        30.001432418823242,
+        118.28253173828125
+      ],
+      "area": 3548.64538227336,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 94,
+      "image_id": 8,
+      "category_id": 1,
+      "bbox": [
+        3440.28466796875,
+        644.6367797851562,
+        207.3961639404297,
+        401.513427734375
+      ],
+      "area": 83272.3446826823,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 95,
+      "image_id": 8,
+      "category_id": 1,
+      "bbox": [
+        454.96124267578125,
+        459.2663879394531,
+        54.523773193359375,
+        149.72015380859375
+      ],
+      "area": 8163.307708734646,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 96,
+      "image_id": 8,
+      "category_id": 1,
+      "bbox": [
+        1210.7923583984375,
+        448.35699462890625,
+        68.98436737060547,
+        150.07577514648438
+      ],
+      "area": 10352.88240613346,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 97,
+      "image_id": 8,
+      "category_id": 1,
+      "bbox": [
+        1758.44970703125,
+        461.096435546875,
+        49.13104248046875,
+        96.89242553710938
+      ],
+      "area": 4760.425875099376,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 98,
+      "image_id": 8,
+      "category_id": 1,
+      "bbox": [
+        2010.78173828125,
+        546.903076171875,
+        96.90681457519531,
+        326.7283630371094
+      ],
+      "area": 31662.204893294256,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 99,
+      "image_id": 8,
+      "category_id": 1,
+      "bbox": [
+        38.401573181152344,
+        630.6307373046875,
+        182.0829620361328,
+        230.58367919921875
+      ],
+      "area": 41985.359305783175,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 100,
+      "image_id": 8,
+      "category_id": 1,
+      "bbox": [
+        1869.402099609375,
+        482.54974365234375,
+        127.04642486572266,
+        237.4073486328125
+      ],
+      "area": 30161.754880649038,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 101,
+      "image_id": 8,
+      "category_id": 1,
+      "bbox": [
+        2277.62890625,
+        69.8880844116211,
+        188.49862670898438,
+        213.7213897705078
+      ],
+      "area": 40286.188470076304,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 102,
+      "image_id": 8,
+      "category_id": 1,
+      "bbox": [
+        2615.0927734375,
+        433.28118896484375,
+        36.690574645996094,
+        93.06883239746094
+      ],
+      "area": 3414.74894229474,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 103,
+      "image_id": 8,
+      "category_id": 72,
+      "bbox": [
+        2270.61083984375,
+        68.10446166992188,
+        201.7620086669922,
+        229.72494506835938
+      ],
+      "area": 46349.76635790663,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 104,
+      "image_id": 8,
+      "category_id": 1,
+      "bbox": [
+        2278.437255859375,
+        74.41004180908203,
+        145.62832641601562,
+        172.91441345214844
+      ],
+      "area": 25181.236644243356,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 105,
+      "image_id": 8,
+      "category_id": 27,
+      "bbox": [
+        23.285743713378906,
+        951.05029296875,
+        110.39302062988281,
+        94.55289459228516
+      ],
+      "area": 10437.97964334127,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 106,
+      "image_id": 8,
+      "category_id": 1,
+      "bbox": [
+        2548.750244140625,
+        433.4787292480469,
+        26.674510955810547,
+        70.4132080078125
+      ],
+      "area": 1878.2378884381615,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 107,
+      "image_id": 8,
+      "category_id": 64,
+      "bbox": [
+        2028.0780029296875,
+        485.06597900390625,
+        29.36074447631836,
+        49.3189582824707
+      ],
+      "area": 1448.0413319698273,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 108,
+      "image_id": 9,
+      "category_id": 1,
+      "bbox": [
+        990.9807739257812,
+        533.7230224609375,
+        71.97592163085938,
+        265.05926513671875
+      ],
+      "area": 19077.884895013645,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 109,
+      "image_id": 9,
+      "category_id": 1,
+      "bbox": [
+        1564.91455078125,
+        554.2353515625,
+        89.81634521484375,
+        274.9517517089844
+      ],
+      "area": 24695.161448920146,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 110,
+      "image_id": 9,
+      "category_id": 1,
+      "bbox": [
+        2594.082763671875,
+        550.1348876953125,
+        67.94701385498047,
+        136.91477966308594
+      ],
+      "area": 9302.950430719298,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 111,
+      "image_id": 9,
+      "category_id": 1,
+      "bbox": [
+        1194.80419921875,
+        500.77313232421875,
+        200.19100952148438,
+        562.8419189453125
+      ],
+      "area": 112675.89195467159,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 112,
+      "image_id": 9,
+      "category_id": 1,
+      "bbox": [
+        2297.869873046875,
+        523.3489379882812,
+        127.31303405761719,
+        278.3309631347656
+      ],
+      "area": 35435.15938886581,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 113,
+      "image_id": 9,
+      "category_id": 1,
+      "bbox": [
+        708.977294921875,
+        547.2266845703125,
+        61.519630432128906,
+        217.00213623046875
+      ],
+      "area": 13349.891223880928,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 114,
+      "image_id": 9,
+      "category_id": 1,
+      "bbox": [
+        822.6351318359375,
+        555.163818359375,
+        81.40631103515625,
+        199.2312469482422
+      ],
+      "area": 16218.680856990628,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 115,
+      "image_id": 9,
+      "category_id": 1,
+      "bbox": [
+        2216.91259765625,
+        584.4468994140625,
+        76.32482147216797,
+        103.87213134765625
+      ],
+      "area": 7928.021881043445,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 116,
+      "image_id": 9,
+      "category_id": 1,
+      "bbox": [
+        3354.150634765625,
+        561.8203125,
+        34.910640716552734,
+        98.36616516113281
+      ],
+      "area": 3434.025850605394,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 117,
+      "image_id": 9,
+      "category_id": 1,
+      "bbox": [
+        395.71844482421875,
+        565.9190673828125,
+        36.35378646850586,
+        99.55467987060547
+      ],
+      "area": 3619.1895739564497,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 118,
+      "image_id": 9,
+      "category_id": 1,
+      "bbox": [
+        278.42340087890625,
+        576.3984375,
+        37.90501022338867,
+        125.44355773925781
+      ],
+      "area": 4754.9393385648145,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 119,
+      "image_id": 9,
+      "category_id": 1,
+      "bbox": [
+        342.2708435058594,
+        564.8248291015625,
+        22.929399490356445,
+        74.53713989257812
+      ],
+      "area": 1709.091857465508,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 120,
+      "image_id": 9,
+      "category_id": 1,
+      "bbox": [
+        1845.92431640625,
+        584.4725952148438,
+        44.44142532348633,
+        101.79170989990234
+      ],
+      "area": 4523.768674066494,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 121,
+      "image_id": 9,
+      "category_id": 1,
+      "bbox": [
+        1781.1552734375,
+        593.8770751953125,
+        43.656803131103516,
+        94.16172790527344
+      ],
+      "area": 4110.800017645059,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 122,
+      "image_id": 9,
+      "category_id": 1,
+      "bbox": [
+        3324.02001953125,
+        573.9810180664062,
+        23.50811195373535,
+        79.23826599121094
+      ],
+      "area": 1862.7420279412472,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 123,
+      "image_id": 9,
+      "category_id": 1,
+      "bbox": [
+        31.896469116210938,
+        563.1965942382812,
+        16.029436111450195,
+        75.39664459228516
+      ],
+      "area": 1208.5656975097518,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 124,
+      "image_id": 9,
+      "category_id": 1,
+      "bbox": [
+        223.5816192626953,
+        570.8792114257812,
+        19.848100662231445,
+        55.55288314819336
+      ],
+      "area": 1102.6192168025227,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 125,
+      "image_id": 9,
+      "category_id": 1,
+      "bbox": [
+        201.6912841796875,
+        545.2222290039062,
+        24.19574737548828,
+        78.13251495361328
+      ],
+      "area": 1890.4745936291874,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 126,
+      "image_id": 9,
+      "category_id": 1,
+      "bbox": [
+        75.09123229980469,
+        524.4049682617188,
+        29.065893173217773,
+        88.26123046875
+      ],
+      "area": 2565.391496141441,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 127,
+      "image_id": 9,
+      "category_id": 64,
+      "bbox": [
+        3797.601806640625,
+        561.5399780273438,
+        42.36345672607422,
+        71.8423843383789
+      ],
+      "area": 3043.491740016907,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 128,
+      "image_id": 10,
+      "category_id": 1,
+      "bbox": [
+        1346.524658203125,
+        632.286865234375,
+        98.6757583618164,
+        228.84963989257812
+      ],
+      "area": 22581.91176722874,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 129,
+      "image_id": 10,
+      "category_id": 1,
+      "bbox": [
+        445.9501953125,
+        507.14996337890625,
+        23.96280860900879,
+        87.15809631347656
+      ],
+      "area": 2088.5527806853934,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 130,
+      "image_id": 10,
+      "category_id": 1,
+      "bbox": [
+        3177.694580078125,
+        521.2411499023438,
+        29.890470504760742,
+        117.83476257324219
+      ],
+      "area": 3522.1364951309806,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 131,
+      "image_id": 10,
+      "category_id": 1,
+      "bbox": [
+        1665.7825927734375,
+        522.4556884765625,
+        31.600299835205078,
+        116.46935272216797
+      ],
+      "area": 3680.4664676327666,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 132,
+      "image_id": 10,
+      "category_id": 1,
+      "bbox": [
+        2257.998291015625,
+        669.8834228515625,
+        163.5705108642578,
+        258.14990234375
+      ],
+      "area": 42225.71140592545,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 133,
+      "image_id": 10,
+      "category_id": 1,
+      "bbox": [
+        1869.7860107421875,
+        536.47216796875,
+        51.387081146240234,
+        112.58152770996094
+      ],
+      "area": 5785.236099999456,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 134,
+      "image_id": 10,
+      "category_id": 1,
+      "bbox": [
+        1469.8568115234375,
+        514.277099609375,
+        25.83342170715332,
+        102.8697509765625
+      ],
+      "area": 2657.477657887386,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 135,
+      "image_id": 10,
+      "category_id": 1,
+      "bbox": [
+        502.06842041015625,
+        508.03936767578125,
+        25.896352767944336,
+        79.52171325683594
+      ],
+      "area": 2059.322339210339,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 136,
+      "image_id": 10,
+      "category_id": 1,
+      "bbox": [
+        1514.15185546875,
+        504.9777526855469,
+        32.464332580566406,
+        111.78604888916016
+      ],
+      "area": 3629.059469005151,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 137,
+      "image_id": 10,
+      "category_id": 1,
+      "bbox": [
+        1439.2579345703125,
+        516.2056884765625,
+        31.119766235351562,
+        98.3216552734375
+      ],
+      "area": 3059.746927982196,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 138,
+      "image_id": 10,
+      "category_id": 1,
+      "bbox": [
+        2054.5703125,
+        595.0772705078125,
+        96.31989288330078,
+        172.79446411132812
+      ],
+      "area": 16643.544274030486,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 139,
+      "image_id": 10,
+      "category_id": 1,
+      "bbox": [
+        2527.214599609375,
+        535.9781494140625,
+        68.5557861328125,
+        154.73194885253906
+      ],
+      "area": 10607.77039344795,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 140,
+      "image_id": 10,
+      "category_id": 1,
+      "bbox": [
+        1806.1336669921875,
+        571.427734375,
+        56.95083999633789,
+        162.3207244873047
+      ],
+      "area": 9244.301608366135,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 141,
+      "image_id": 10,
+      "category_id": 1,
+      "bbox": [
+        1562.7332763671875,
+        556.5921630859375,
+        51.417110443115234,
+        139.46566772460938
+      ],
+      "area": 7170.921640419052,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 142,
+      "image_id": 10,
+      "category_id": 1,
+      "bbox": [
+        591.4202880859375,
+        493.5420227050781,
+        39.28520584106445,
+        110.48018646240234
+      ],
+      "area": 4340.2368665346585,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 143,
+      "image_id": 10,
+      "category_id": 1,
+      "bbox": [
+        215.58673095703125,
+        468.94329833984375,
+        28.13762092590332,
+        79.53411865234375
+      ],
+      "area": 2237.900881315465,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 144,
+      "image_id": 10,
+      "category_id": 1,
+      "bbox": [
+        193.57330322265625,
+        439.6593933105469,
+        30.15764045715332,
+        82.86334991455078
+      ],
+      "area": 2498.9631137983088,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 145,
+      "image_id": 10,
+      "category_id": 1,
+      "bbox": [
+        1564.24951171875,
+        590.119873046875,
+        42.75407028198242,
+        108.6660385131836
+      ],
+      "area": 4645.91544785726,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 146,
+      "image_id": 10,
+      "category_id": 1,
+      "bbox": [
+        1444.7916259765625,
+        515.645263671875,
+        47.34617614746094,
+        101.680908203125
+      ],
+      "area": 4814.202190618962,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 147,
+      "image_id": 10,
+      "category_id": 1,
+      "bbox": [
+        214.58351135253906,
+        456.3812255859375,
+        29.598915100097656,
+        74.73565673828125
+      ],
+      "area": 2212.094358746428,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 148,
+      "image_id": 10,
+      "category_id": 1,
+      "bbox": [
+        1637.49365234375,
+        531.1448974609375,
+        34.31778335571289,
+        98.64656066894531
+      ],
+      "area": 3385.3312978230533,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 149,
+      "image_id": 11,
+      "category_id": 1,
+      "bbox": [
+        3543.660888671875,
+        559.2632446289062,
+        62.532169342041016,
+        174.60531616210938
+      ],
+      "area": 10918.449198269635,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 150,
+      "image_id": 11,
+      "category_id": 1,
+      "bbox": [
+        2544.61083984375,
+        565.3339233398438,
+        97.52558898925781,
+        252.8883056640625
+      ],
+      "area": 24663.080958383158,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 151,
+      "image_id": 11,
+      "category_id": 1,
+      "bbox": [
+        3109.4873046875,
+        617.10595703125,
+        123.51651000976562,
+        306.37139892578125
+      ],
+      "area": 37841.92596212216,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 152,
+      "image_id": 11,
+      "category_id": 1,
+      "bbox": [
+        2293.701416015625,
+        557.4326171875,
+        83.42544555664062,
+        212.990234375
+      ],
+      "area": 17768.80520194769,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 153,
+      "image_id": 11,
+      "category_id": 1,
+      "bbox": [
+        2098.512939453125,
+        538.661865234375,
+        57.6755256652832,
+        148.4462890625
+      ],
+      "area": 8561.717754740268,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 154,
+      "image_id": 11,
+      "category_id": 1,
+      "bbox": [
+        2715.853271484375,
+        569.4157104492188,
+        77.71018981933594,
+        148.7877655029297
+      ],
+      "area": 11562.32550002751,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 155,
+      "image_id": 11,
+      "category_id": 1,
+      "bbox": [
+        25.860610961914062,
+        436.5249938964844,
+        75.29830169677734,
+        213.0769500732422
+      ],
+      "area": 16044.332471244154,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 156,
+      "image_id": 11,
+      "category_id": 1,
+      "bbox": [
+        3345.0283203125,
+        552.7806396484375,
+        67.13948822021484,
+        160.61553955078125
+      ],
+      "area": 10783.645125653129,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 157,
+      "image_id": 11,
+      "category_id": 1,
+      "bbox": [
+        2856.3759765625,
+        532.3766479492188,
+        50.15153884887695,
+        156.61936950683594
+      ],
+      "area": 7854.702394308697,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 158,
+      "image_id": 11,
+      "category_id": 1,
+      "bbox": [
+        1872.1512451171875,
+        558.3219604492188,
+        35.68484878540039,
+        93.54713439941406
+      ],
+      "area": 3338.215345350618,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 159,
+      "image_id": 11,
+      "category_id": 1,
+      "bbox": [
+        1100.0296630859375,
+        513.178955078125,
+        34.42333221435547,
+        110.95254516601562
+      ],
+      "area": 3819.356322278036,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 160,
+      "image_id": 11,
+      "category_id": 1,
+      "bbox": [
+        3782.511474609375,
+        510.0235290527344,
+        21.336620330810547,
+        70.41545104980469
+      ],
+      "area": 1502.4277444724576,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 161,
+      "image_id": 11,
+      "category_id": 1,
+      "bbox": [
+        1457.34130859375,
+        548.5916748046875,
+        50.816490173339844,
+        82.32601165771484
+      ],
+      "area": 4183.518962414528,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 162,
+      "image_id": 11,
+      "category_id": 1,
+      "bbox": [
+        919.4912719726562,
+        417.1221618652344,
+        66.36508178710938,
+        152.89857482910156
+      ],
+      "area": 10147.126423665788,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 163,
+      "image_id": 11,
+      "category_id": 1,
+      "bbox": [
+        229.6493682861328,
+        406.46533203125,
+        118.59408569335938,
+        169.9801788330078
+      ],
+      "area": 20158.64389469428,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 164,
+      "image_id": 11,
+      "category_id": 1,
+      "bbox": [
+        1370.702392578125,
+        551.475341796875,
+        35.510597229003906,
+        84.6527328491211
+      ],
+      "area": 3006.0691005396075,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 165,
+      "image_id": 11,
+      "category_id": 1,
+      "bbox": [
+        2630.4921875,
+        578.1911010742188,
+        41.98366165161133,
+        55.931640625
+      ],
+      "area": 2348.2150756195188,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 166,
+      "image_id": 11,
+      "category_id": 1,
+      "bbox": [
+        1163.0579833984375,
+        521.5494995117188,
+        35.1099739074707,
+        105.32283020019531
+      ],
+      "area": 3697.881820189825,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 167,
+      "image_id": 11,
+      "category_id": 1,
+      "bbox": [
+        234.26513671875,
+        414.3245849609375,
+        136.47862243652344,
+        216.89125061035156
+      ],
+      "area": 29601.019101835554,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 168,
+      "image_id": 11,
+      "category_id": 1,
+      "bbox": [
+        1330.4837646484375,
+        539.4130249023438,
+        36.2138671875,
+        91.20437622070312
+      ],
+      "area": 3302.863167375326,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 169,
+      "image_id": 11,
+      "category_id": 1,
+      "bbox": [
+        1401.2725830078125,
+        551.9614868164062,
+        37.610530853271484,
+        83.1415023803711
+      ],
+      "area": 3126.9960404642916,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 170,
+      "image_id": 11,
+      "category_id": 1,
+      "bbox": [
+        2222.2548828125,
+        556.3511962890625,
+        46.823822021484375,
+        93.54793548583984
+      ],
+      "area": 4380.271881666267,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 171,
+      "image_id": 11,
+      "category_id": 1,
+      "bbox": [
+        230.5633087158203,
+        409.6665954589844,
+        110.08023071289062,
+        105.94532775878906
+      ],
+      "area": 11662.486122640315,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 172,
+      "image_id": 11,
+      "category_id": 1,
+      "bbox": [
+        162.7745361328125,
+        422.11688232421875,
+        103.90538024902344,
+        209.73573303222656
+      ],
+      "area": 21792.671092521166,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
+    },
+    {
+      "id": 173,
+      "image_id": 11,
+      "category_id": 1,
+      "bbox": [
+        186.47503662109375,
+        427.6650085449219,
+        51.64811325073242,
+        75.4719009399414
+      ],
+      "area": 3897.9812869941525,
+      "iscrowd": 0,
+      "segmentation": [],
+      "source": "manual_coco_annotation"
     }
   ],
   "categories": [

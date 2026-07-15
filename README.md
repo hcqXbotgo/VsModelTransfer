@@ -18,7 +18,7 @@ quant_folder/
     │   └── docs/
     └── soccer/
         ├── model/
-        ├── datasets/               # calibration/evaluation/draft/inbox/reports
+        ├── datasets/               # calibration/evaluation/draft/reports
         ├── configs/
         ├── outputs/                # quant/evaluation/compile 生成结果
         ├── tools/
@@ -26,6 +26,19 @@ quant_folder/
 ```
 
 每个运动模式自包含模型、数据、配置和输出。只有通用 Python loader/metric 放在 `common/`，避免复制代码。
+
+## 首次环境配置
+
+机器相关路径不写在代码或 YAML 中。首次拉取仓库后执行：
+
+```bash
+cd /path/to/quant_folder
+cp env.example.sh env.sh
+vim env.sh
+```
+
+在 `env.sh` 中配置 Conda 根目录、环境名称和 StatlasCompile 目录。该文件只属于本机并已被
+Git 忽略；可提交的变量模板是 `env.example.sh`。
 
 ## 总入口
 
@@ -60,9 +73,13 @@ cd /home/dragonfly/wj_sdk/quant_folder
 添加 soccer 数据：
 
 ```bash
-./run.sh soccer add-eval /path/to/eval_images
 ./run.sh soccer add-calibration /path/to/calibration_images
+./run.sh soccer import-eval
 ```
+
+将待评估图片直接放入 `datasets/draft/images`，将审核后的 COCO 标注保存为
+`datasets/draft/annotations/instances.json`，再运行 `import-eval`，即可安全合并到正式
+evaluation 数据集。
 
 新增运动模式时复制任一模式骨架，至少提供以下配置：
 

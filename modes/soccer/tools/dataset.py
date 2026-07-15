@@ -72,7 +72,6 @@ def seed(args):
     draft_dir = root / 'draft' / 'images'
     calibration_dir = root / 'calibration' / 'images'
     for path in (approved_dir, draft_dir, calibration_dir,
-                 root / 'inbox' / 'eval', root / 'inbox' / 'calibration',
                  root / 'evaluation' / 'annotations',
                  root / 'draft' / 'annotations', root / 'reports'):
         path.mkdir(parents=True, exist_ok=True)
@@ -159,8 +158,7 @@ def seed(args):
 
 def add_images(args):
     root = Path(args.root)
-    destination = (root / 'inbox' / 'eval' if args.kind == 'eval'
-                   else root / 'calibration' / 'images')
+    destination = root / 'calibration' / 'images'
     copied = 0
     for value in args.paths:
         for source in image_files(value):
@@ -182,6 +180,20 @@ def import_coco(args):
     target = load_json(target_path)
     incoming = load_json(args.annotations)
     incoming_dir = Path(args.images)
+
+    unreviewed_images = [
+        item for item in incoming.get('images', [])
+        if item.get('review_status') == 'needs_review'
+    ]
+    unreviewed_annotations = [
+        item for item in incoming.get('annotations', [])
+        if item.get('review_status') == 'needs_review'
+    ]
+    if unreviewed_images or unreviewed_annotations:
+        raise SystemExit(
+            'refusing unreviewed annotations: {} image(s), {} annotation(s) '
+            'still have review_status=needs_review; review/export them first'.format(
+                len(unreviewed_images), len(unreviewed_annotations)))
 
     target_category_by_name = {
         item['name']: item['id'] for item in target['categories']
@@ -303,7 +315,7 @@ def main():
 
     add_parser = subparsers.add_parser('add')
     add_parser.add_argument('--root', required=True)
-    add_parser.add_argument('--kind', choices=('eval', 'calibration'), required=True)
+    add_parser.add_argument('--kind', choices=('calibration',), required=True)
     add_parser.add_argument('paths', nargs='+')
     add_parser.set_defaults(func=add_images)
 

@@ -1,7 +1,8 @@
 # Soccer 3328×1024 数据、量化、评估与编译流程
 
-本文档是 `yolov5n_falcon2_3328_1024_clean.onnx` 的维护入口。所有命令默认从
-`/home/dragonfly/wj_sdk/quant_folder` 执行。
+本文档是 `yolov5n_falcon2_3328_1024_clean.onnx` 的维护入口。所有命令默认从仓库的
+`quant_folder` 根目录执行。首次运行前复制 `env.example.sh` 为 `env.sh`，并配置本机的
+Conda 环境与编译器路径。
 
 ## 1. 当前状态
 
@@ -39,9 +40,6 @@ modes/soccer/datasets/
 │   └── images/                    # 等待人工清洗和标注
 ├── calibration/
 │   └── images/                   # 无需标注，不得与正式评估图片重复
-├── inbox/
-│   ├── eval/                     # 新增待标注评估图片
-│   └── calibration/              # 可选临时收件目录
 └── reports/
 ```
 
@@ -64,13 +62,15 @@ modes/soccer/datasets/
 4. 不要只挑模型容易识别的图片。
 5. 评估图片必须能进行穷举标注；无法判断的图片放校准集，不放评估集。
 
-管理脚本会检查图片可解码并报告原始尺寸：
+新增评估数据时不需要运行入箱命令，直接维护以下两个位置：
 
-```bash
-./run.sh soccer add-eval /path/to/new_images
+```text
+modes/soccer/datasets/draft/images/
+modes/soccer/datasets/draft/annotations/instances.json
 ```
 
-新评估图片会进入 `modes/soccer/datasets/inbox/eval`，不会自动进入正式评估。
+COCO JSON 中每个 `images[].file_name` 必须能在 `draft/images` 中找到对应图片。
+图片和标注未人工审核完成前不要运行 `import-eval`。
 
 ## 4. 添加和审核真实评估标注
 
@@ -89,18 +89,19 @@ modes/soccer/datasets/
 2. 使用 COCO 80 类标签；至少创建数据实际涉及的类别。
 3. 将 `modes/soccer/datasets/draft/annotations/instances.json` 作为 COCO 1.0 预标注导入。
 4. 逐张补漏、删误检、修类别、调整边界框。
-5. 完成复核后导出为 COCO 1.0，例如 `/tmp/soccer_review/instances_default.json`。
+5. 完成复核后导出为 COCO 1.0，并用导出的 JSON 替换
+   `modes/soccer/datasets/draft/annotations/instances.json`。
 6. 将审核结果合并进正式数据集：
 
 ```bash
-python modes/soccer/tools/dataset.py import-coco \
-  --root modes/soccer/datasets \
-  --annotations /tmp/soccer_review/instances_default.json \
-  --images modes/soccer/datasets/draft/images \
-  --source manual_soccer_review
+./run.sh soccer import-eval --source manual_soccer_review
 ```
 
-7. 导入后必须校验：
+该命令按类别名称映射 category ID，重新分配 image/annotation ID，复制图片并合并到
+`evaluation/annotations/instances.json`，不会覆盖已有标注。原始 draft 中仍带有
+`review_status=needs_review` 的预标注会被拒绝，不能未经人工审核直接合并。
+
+7. 入口会在导入后自动校验，也可以再次手动校验：
 
 ```bash
 ./run.sh soccer validate
