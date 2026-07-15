@@ -27,7 +27,7 @@ metric:
     img_size: 640
     decode_mode: yolov5
     conf_threshold: 0.001
-    iou_threshold: 0.65
+    iou_threshold: 0.3
     img_dir: modes/demo/datasets/evaluation/images
     vis_dir: modes/demo/outputs/evaluation/visualizations
     vis_num: 10

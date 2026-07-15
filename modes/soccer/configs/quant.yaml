@@ -23,5 +23,7 @@ dataset:
   transform:
     resize: [1024, 3328]
     crop: [1024, 3328]
+    mean: [0.0, 0.0, 0.0]
+    std: [1.0, 1.0, 1.0]
 
 out_dir: modes/soccer/outputs/quant/

@@ -12,20 +12,32 @@ Conda 环境与编译器路径。
 
 | 分区 | 图片 | 标注 | 状态 | 用途 |
 |---|---:|---:|---|---|
-| `evaluation/images` | 6 | 73 | COCO 人工真值 | 正式评估 |
+| `evaluation/images` | 11 | 173 | COCO 人工真值 | 正式评估 |
 | `draft/images` | 5 | 100 | 浮点模型预标注，未人工审核 | CVAT 标注草稿 |
 | `calibration/images` | 5 | 不需要 | 球场全景原图 | PTQ 校准 |
 
 注意：`draft` 绝不能直接用于 AP 计算。模型预测不是 ground truth，只有人工逐框确认并导入
 `instances_eval.json` 后才属于正式评估集。
 
-当前正式小数据集的量化基线（6 张，样本很少，只用于回归检查）：
+当前正式小数据集的量化基线（11 张，样本很少，只用于回归检查）：
 
 | 日期 | 量化参数 | AP50-95 | AP50 | 备注 |
 |---|---|---:|---:|---|
 | 2026-07-15 | 浮点 ONNX | 0.1610 | 0.2866 | 6 张 COCO 真值图被拉伸至 3328×1024 |
 | 2026-07-15 | ImageNet 20 张校准；检测头 FP16、其余 INT8 | 0.0351 | 0.0668 | 当前主量化产物 |
 | 2026-07-15 | 球场 5 张校准；检测头 FP16、其余 INT8 | 0.0042 | 0.0107 | 独立 A/B 产物；在 COCO 域明显下降 |
+| 2026-07-15 | 浮点 ONNX | 0.3550 | 0.4399 | 扩充后的 11 张正式 evaluation；`float-eval` 实测 |
+| 2026-07-15 | 球场 5 张校准；前处理对齐；检测头 FP16、其余 INT8 | 0.0944 | 0.2487 | RGB、resize/crop、mean/std 与评估一致 |
+
+原始 ONNX 对照评估和 draft 画框：
+
+```bash
+./run.sh soccer float-eval
+./run.sh soccer float-visualize
+```
+
+原始 ONNX 框图分别输出到 `outputs/evaluation/float_visualizations` 和
+`outputs/evaluation/draft_float_visualizations`，不会覆盖量化模型结果。
 
 ## 2. 目录规范
 
@@ -46,6 +58,8 @@ modes/soccer/datasets/
 约束：
 
 - 原始图片保留原分辨率，不要提前拉伸或覆盖；loader 负责转换到 3328×1024。
+- 校准和评估必须使用相同的 RGB、resize/crop 与归一化；当前统一为 RGB、`[0,1]`、
+  `mean=[0,0,0]`、`std=[1,1,1]`。
 - 支持 `.jpg/.jpeg/.png/.bmp`，推荐 RGB JPEG 或 PNG。
 - 评估集和校准集不能使用同一张图片，也不要放相邻视频帧，避免数据泄漏。
 - 同一场景连续帧应按场次分组，只选择少量有代表性的帧。

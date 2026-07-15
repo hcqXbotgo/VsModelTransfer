@@ -72,6 +72,29 @@ def eval_command(mode, operation='eval'):
     return [quant, '--quant_cfg', config(mode, operation)]
 
 
+def original_model(mode):
+    models = sorted((MODES_ROOT / mode / 'model').glob('*.onnx'))
+    if len(models) != 1:
+        raise SystemExit(
+            '{} mode must contain exactly one original ONNX in model/; found {}'.format(
+                mode, len(models)))
+    return models[0]
+
+
+def float_command(mode, operation):
+    python = require(executable('STATLAS_PYTHON', DEFAULT_PYTHON, 'python3'),
+                     'Python')
+    evaluator = require(ROOT / 'common' / 'evaluation' / 'yolo_coco_metric.py',
+                        'float ONNX evaluator')
+    config_name = 'eval' if operation == 'float-eval' else 'visualize'
+    vis_name = ('float_visualizations' if operation == 'float-eval'
+                else 'draft_float_visualizations')
+    vis_dir = MODES_ROOT / mode / 'outputs' / 'evaluation' / vis_name
+    return [python, evaluator, '--config', config(mode, config_name),
+            '--model', original_model(mode), '--num', '0',
+            '--vis-dir', vis_dir]
+
+
 def compile_command(mode):
     compiler_root = Path(os.environ.get('STATLAS_COMPILE_DIR',
                                         DEFAULT_COMPILER_ROOT))
@@ -157,7 +180,8 @@ def main():
     parser.add_argument('mode', nargs='?', choices=modes)
     parser.add_argument(
         'operation', nargs='?',
-        choices=('quant', 'eval', 'visualize', 'compile', 'validate',
+        choices=('quant', 'eval', 'visualize', 'float-eval',
+                 'float-visualize', 'compile', 'validate',
                  'status', 'all', 'add-calibration',
                  'import-eval'))
     parser.add_argument('paths', nargs='*', help='Image paths for add operations')
@@ -177,6 +201,8 @@ def main():
         run_command(quant_command(args.mode), args.dry_run)
     elif args.operation in ('eval', 'visualize'):
         run_command(eval_command(args.mode, args.operation), args.dry_run)
+    elif args.operation in ('float-eval', 'float-visualize'):
+        run_command(float_command(args.mode, args.operation), args.dry_run)
     elif args.operation == 'compile':
         command, compiler_root = compile_command(args.mode)
         env = os.environ.copy()
@@ -195,6 +221,7 @@ def main():
     elif args.operation == 'all':
         run_command(quant_command(args.mode), args.dry_run)
         run_command(eval_command(args.mode), args.dry_run)
+        run_command(float_command(args.mode, 'float-eval'), args.dry_run)
         command, compiler_root = compile_command(args.mode)
         env = os.environ.copy()
         env['LD_LIBRARY_PATH'] = str(compiler_root / 'lib') + (

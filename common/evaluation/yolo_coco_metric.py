@@ -299,8 +299,11 @@ def demo():
     ap = argparse.ArgumentParser()
     ap.add_argument('--config', required=True, help='Eval yaml config path')
     ap.add_argument('--model', help='Override model path from the eval config')
-    ap.add_argument('--num', type=int, default=50, help='Max images')
-    ap.add_argument('--conf', type=float, default=0.25, help='Confidence threshold')
+    ap.add_argument('--num', type=int, default=0,
+                    help='Max images; 0 uses the config limit or all images')
+    ap.add_argument('--conf', type=float,
+                    help='Override the config confidence threshold')
+    ap.add_argument('--vis-dir', help='Override visualization output directory')
     ap.add_argument('--pred-json', help='Write decoded predictions as COCO JSON')
     ap.add_argument('--skip-metric', action='store_true',
                     help='Skip COCO metric computation (for unlabeled images)')
@@ -319,18 +322,16 @@ def demo():
         model_path = os.path.join(cwd, model_path)
     annfile = d['ann_file'] if os.path.isabs(d['ann_file']) else os.path.join(cwd, d['ann_file'])
     img_dir = d['img_dir'] if os.path.isabs(d['img_dir']) else os.path.join(cwd, d['img_dir'])
-    img_size = tuple(m['img_size'])
+    def size_pair(value):
+        if isinstance(value, int):
+            return (value, value)
+        return tuple(value)
+
+    img_size = size_pair(m['img_size'])
     decode_mode = m.get('decode_mode', 'yolov5')
     configured_num = d.get('num_samples', 5000)
-    num = args.num if configured_num <= 0 else min(args.num, configured_num)
-    resize_size = tuple(d.get('resize_size', img_size))
-    crop_size = tuple(d.get('crop_size', img_size))
-
-    print(f'Model:  {model_path}')
-    print(f'Anns:   {annfile}')
-    print(f'Images: {num} from {img_dir}')
-    print(f'Size:   resize={resize_size} crop={crop_size} decode={decode_mode}')
-    print()
+    resize_size = size_pair(d.get('resize_size', img_size))
+    crop_size = size_pair(d.get('crop_size', img_size))
 
     # Load model
     import onnx
@@ -344,12 +345,38 @@ def demo():
         transforms.ToTensor(),
     ])
 
-    evaluator = CocoEvalBase(annfile, img_size, decode_mode)
+    vis_dir = args.vis_dir or m.get('vis_dir')
+    if vis_dir and not os.path.isabs(vis_dir):
+        vis_dir = os.path.join(cwd, vis_dir)
+    inference_conf = (args.conf if args.conf is not None
+                      else m.get('conf_threshold', 0.001))
+    evaluator = CocoEvalBase(
+        annfile, img_size, decode_mode,
+        conf_threshold=inference_conf,
+        iou_threshold=m.get('iou_threshold', 0.65),
+        img_dir=img_dir,
+        vis_dir=vis_dir,
+        vis_num=m.get('vis_num', 0),
+        vis_conf_threshold=m.get('vis_conf_threshold', 0.25),
+        vis_max_boxes=m.get('vis_max_boxes', 100),
+        visualize_only=m.get('visualize_only', False))
     img_ids = sorted(evaluator.coco.imgs.keys())
+    limits = [value for value in (args.num, configured_num) if value > 0]
+    num = min(limits) if limits else len(img_ids)
+    num = min(num, len(img_ids))
     if num < len(img_ids):
         import random
         random.seed(42)
         img_ids = random.sample(img_ids, num)
+
+    print(f'Model:  {model_path}')
+    print(f'Anns:   {annfile}')
+    print(f'Images: {len(img_ids)} from {img_dir}')
+    print(f'Size:   resize={resize_size} crop={crop_size} decode={decode_mode}')
+    print(f'Confidence: {inference_conf}')
+    if vis_dir:
+        print(f'Visualizations: {vis_dir}')
+    print()
 
     for i, img_id in enumerate(img_ids):
         info = evaluator.coco.loadImgs(img_id)[0]
@@ -366,7 +393,7 @@ def demo():
         # Confidence filter
         cls_scores = out[:, 5:]
         scores = out[:, 4] * cls_scores.max(dim=1).values
-        keep = scores > args.conf
+        keep = scores > inference_conf
         if keep.sum() > 0:
             evaluator.process_output(out[keep], h, w, img_id)
 
@@ -383,11 +410,10 @@ def demo():
             json.dump(evaluator.data_list, f, indent=2)
         print('Predictions: {}'.format(pred_json))
 
-    if args.skip_metric:
-        return
-
     print()
     ap50_95, ap50, summary = evaluator.compute()
+    if args.skip_metric:
+        return
     print(summary)
     print(f'AP50_95={ap50_95:.4f} AP50={ap50:.4f}')
 

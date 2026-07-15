@@ -51,18 +51,27 @@ cd /home/dragonfly/wj_sdk/quant_folder
 ./run.sh soccer quant
 ./run.sh soccer eval
 ./run.sh soccer visualize
+./run.sh soccer float-eval
+./run.sh soccer float-visualize
 ./run.sh soccer compile
 
 ./run.sh demo quant
 ./run.sh demo eval
+./run.sh demo float-eval
 ./run.sh demo compile
 ```
 
-完整执行量化、评估和编译：
+`float-eval` 使用 `model/` 下的原始 ONNX 计算 AP，并把框图输出到
+`outputs/evaluation/float_visualizations`；`float-visualize` 使用原始 ONNX 对 draft 图片画框。
+二者不依赖量化产物，可用于和 `eval`/`visualize` 的量化效果对比。
+
+完整执行量化、量化评估、原始 ONNX 对照评估和编译：
 
 ```bash
 ./run.sh soccer all
 ```
+
+`all` 会同时生成量化模型的 `visualizations` 和原始 ONNX 的 `float_visualizations`。
 
 只查看实际命令而不执行：
 

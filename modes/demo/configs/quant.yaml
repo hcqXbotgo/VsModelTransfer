@@ -21,7 +21,9 @@ dataset:
     batch_size: 1
     num_worker: 4
   transform:
-    resize: 784
-    crop: 640
+    resize: [640, 640]
+    crop: [640, 640]
+    mean: [0.0, 0.0, 0.0]
+    std: [1.0, 1.0, 1.0]
 
 out_dir: modes/demo/outputs/quant/
