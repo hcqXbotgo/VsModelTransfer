@@ -1,0 +1,4 @@
+model: modes/demo_v26/outputs/quant/yolo26n_opset13_fp32_clean_deploy_model.onnx
+quantize: modes/demo_v26/outputs/quant/yolo26n_opset13_fp32_clean_quant_param.yaml
+output: modes/demo_v26/outputs/compile/yolo26n_opset13_fp32_clean.mgz
+optimze_level: 1

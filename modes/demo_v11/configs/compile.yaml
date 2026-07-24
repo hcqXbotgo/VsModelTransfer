@@ -1,0 +1,4 @@
+model: modes/demo_v11/outputs/quant/yolo11n_opset13_fp32_deploy_model.onnx
+quantize: modes/demo_v11/outputs/quant/yolo11n_opset13_fp32_quant_param.yaml
+output: modes/demo_v11/outputs/compile/yolo11n_opset13_fp32.mgz
+optimze_level: 1

@@ -53,17 +53,26 @@ cd /home/dragonfly/wj_sdk/quant_folder
 ./run.sh soccer visualize
 ./run.sh soccer float-eval
 ./run.sh soccer float-visualize
+./run.sh soccer compare
 ./run.sh soccer compile
 
 ./run.sh demo quant
 ./run.sh demo eval
 ./run.sh demo float-eval
+./run.sh demo compare
 ./run.sh demo compile
 ```
 
 `float-eval` 使用 `model/` 下的原始 ONNX 计算 AP，并把框图输出到
 `outputs/evaluation/float_visualizations`；`float-visualize` 使用原始 ONNX 对 draft 图片画框。
 二者不依赖量化产物，可用于和 `eval`/`visualize` 的量化效果对比。
+
+`compare` 使用一张代表图片逐层比较关闭/开启量化时的激活输出，生成原始 CSV、按
+`1 - cosine_similarity` 排序的 CSV 和 `REPORT.md`：
+
+```text
+modes/<mode>/outputs/evaluation/compare/
+```
 
 完整执行量化、量化评估、原始 ONNX 对照评估和编译：
 
@@ -96,6 +105,7 @@ evaluation 数据集。
 modes/<mode>/configs/quant.yaml
 modes/<mode>/configs/eval.yaml
 modes/<mode>/configs/visualize.yaml
+modes/<mode>/configs/compare.yaml
 modes/<mode>/configs/compile.yaml
 modes/<mode>/configs/mixed_precision.yaml
 ```

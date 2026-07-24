@@ -1,5 +1,5 @@
 model:
-  onnx_model: modes/soccer/model/yolov5n_falcon2_3328_1024_clean.onnx
+  onnx_model: modes/demo_v26/model/yolo26n_opset13_fp32_clean.onnx
 
 work_mode: PTQ
 
@@ -26,4 +26,4 @@ dataset:
     mean: [0.0, 0.0, 0.0]
     std: [1.0, 1.0, 1.0]
 
-out_dir: modes/soccer/outputs/quant/
+out_dir: modes/demo_v26/outputs/quant/

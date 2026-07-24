@@ -38,12 +38,130 @@ def _decode_yolov5(output, img_h, img_w, img_size):
     return bboxes, scores, cls
 
 
+def _decode_post_nms(output, img_h, img_w, img_size):
+    """For models with built-in NMS. Output: [N, 6] = [x1, y1, x2, y2, conf, cls]
+    in input scale. Returns xywh in original image scale."""
+    if output.dim() == 3:
+        output = output[0]
+    bboxes = output[:, 0:4].clone()
+    scale_x = float(img_w) / float(img_size[1])
+    scale_y = float(img_h) / float(img_size[0])
+    bboxes[:, 0] *= scale_x
+    bboxes[:, 2] *= scale_x
+    bboxes[:, 1] *= scale_y
+    bboxes[:, 3] *= scale_y
+    bboxes[:, 2] -= bboxes[:, 0]
+    bboxes[:, 3] -= bboxes[:, 1]
+    scores = output[:, 4]
+    cls = output[:, 5].long()
+    return bboxes, scores, cls
+
+
+def _decode_yolov8_raw(output, img_h, img_w, img_size):
+    """For YOLOv8/v11 raw output (no NMS). Shape: [B, 4+nc, N] or [4+nc, N].
+    bbox is already DFL-decoded xywh in input scale; class scores are
+    raw logits, sigmoid is applied here."""
+    if output.dim() == 3:
+        output = output[0]  # [4+nc, N] or [N, 4+nc]
+    # Detect orientation: channels dim (4+nc) is smaller than anchors dim
+    if output.shape[0] < output.shape[1]:
+        output = output.transpose(0, 1)  # [N, 4+nc]
+    nc = output.shape[1] - 4
+    bboxes = output[:, 0:4].clone()
+    scale_x = float(img_w) / float(img_size[1])
+    scale_y = float(img_h) / float(img_size[0])
+    bboxes[:, 0] *= scale_x
+    bboxes[:, 2] *= scale_x
+    bboxes[:, 1] *= scale_y
+    bboxes[:, 3] *= scale_y
+    bboxes[:, 0] -= bboxes[:, 2] / 2
+    bboxes[:, 1] -= bboxes[:, 3] / 2
+    cls_scores = torch.sigmoid(output[:, 4:4 + nc])
+    scores, cls = cls_scores.max(dim=1)
+    return bboxes, scores, cls.long()
+
+
+def _decode_yolov8_headcut(outputs, img_h, img_w, img_size):
+    """Decode head-cut YOLOv8/v11 raw feature maps on host (deployment path).
+
+    `outputs` is the 6-output tuple from the head-cut model: 3 scales x
+    (box, cls), each ``[1, C, H, W]``. box has ``C = 4*reg_max`` (DFL),
+    cls has ``C = nc``. Does DFL softmax + dist2bbox + sigmoid here so the
+    decode matches the FP32 host path used at deployment (the NPU only runs
+    the quantized backbone+conv, returning these raw maps).
+
+    Returns bboxes (xywh in original-image scale), scores, cls - same
+    contract as the other decoders.
+    """
+    in_h, in_w = img_size
+    # group the 6 outputs by (H, W): each scale has a box and a cls map
+    feats = {}
+    for t in outputs:
+        if t.dim() == 4:
+            t = t[0]  # [C, H, W]
+        feats.setdefault((t.shape[1], t.shape[2]), []).append(t)
+
+    boxes_all, scores_all, cls_all = [], [], []
+    for (h, w), maps in sorted(feats.items()):
+        stride = in_h // h
+        box = max(maps, key=lambda x: x.shape[0])      # C = 4*reg_max
+        cls = min(maps, key=lambda x: x.shape[0])      # C = nc
+        reg_max = box.shape[0] // 4
+        nc = cls.shape[0]
+        n = h * w
+        # DFL: [4*reg_max, H, W] -> [4, reg_max, N] -> softmax(reg_max) -> weighted sum
+        box = box.reshape(4, reg_max, n).softmax(dim=1)
+        proj = torch.arange(reg_max, dtype=box.dtype, device=box.device)
+        dist = (box * proj.view(1, reg_max, 1)).sum(dim=1)  # [4, N]
+        lt, rb = dist[:2], dist[2:]                          # each [2, N]
+        # DFL dist is in grid units (0..reg_max-1); anchor-free grid centers
+        # in grid coords, then scale box by stride to input pixels.
+        gy, gx = torch.meshgrid(torch.arange(h, dtype=torch.float32),
+                                torch.arange(w, dtype=torch.float32), indexing='ij')
+        ax = gx + 0.5
+        ay = gy + 0.5
+        ax = ax.reshape(-1)
+        ay = ay.reshape(-1)
+        x1 = ax - lt[0]
+        y1 = ay - lt[1]
+        x2 = ax + rb[0]
+        y2 = ay + rb[1]
+        bw = x2 - x1
+        bh = y2 - y1
+        # grid units -> input pixels (left/top + wh, matching other decoders)
+        x1 = x1 * stride
+        y1 = y1 * stride
+        bw = bw * stride
+        bh = bh * stride
+        boxes_all.append(torch.stack([x1, y1, bw, bh], dim=1))  # [N, 4]
+        cls_s = torch.sigmoid(cls.reshape(nc, n))             # [nc, N]
+        scores, cls_idx = cls_s.max(dim=0)                     # [N]
+        scores_all.append(scores)
+        cls_all.append(cls_idx)
+
+    bboxes = torch.cat(boxes_all, dim=0)
+    scores = torch.cat(scores_all, dim=0)
+    cls = torch.cat(cls_all, dim=0)
+    # input scale -> original image scale
+    sx = float(img_w) / float(in_w)
+    sy = float(img_h) / float(in_h)
+    bboxes[:, 0] *= sx
+    bboxes[:, 2] *= sx
+    bboxes[:, 1] *= sy
+    bboxes[:, 3] *= sy
+    return bboxes, scores, cls.long()
+
+
 DECODERS = {
     'yolox': _decode_yolox,
     'yolov5': _decode_yolov5,
     'yolov8': _decode_yolov5,
     'yolov11': _decode_yolov5,
+    'post_nms': _decode_post_nms,
+    'yolov8_raw': _decode_yolov8_raw,
+    'yolov8_headcut': _decode_yolov8_headcut,
 }
+
 
 # ── NMS ─────────────────────────────────────────────────
 
@@ -75,7 +193,11 @@ class CocoEvalBase:
         self.coco = COCO(annfile)
         self.class_ids = sorted(self.coco.getCatIds())
         self.img_size = (img_size, img_size) if isinstance(img_size, int) else tuple(img_size)
-        self.decode_fn = DECODERS.get(decode_mode, _decode_yolox)
+        if decode_mode not in DECODERS:
+            raise ValueError('unsupported decode_mode {!r}; choose one of {}'.format(
+                decode_mode, sorted(DECODERS)))
+        self.decode_fn = DECODERS[decode_mode]
+        self.decode_mode = decode_mode
         self.conf_threshold = conf_threshold
         self.iou_threshold = iou_threshold
         self.img_dir = _get_absolute_path(img_dir) if img_dir else None
@@ -94,7 +216,36 @@ class CocoEvalBase:
 
     def process_output(self, output, img_h, img_w, img_id):
         self.img_ids.add(int(img_id))
-        bboxes, scores, cls = self.decode_fn(output, img_h, img_w, self.img_size)
+        if self.decode_mode == 'yolov8_headcut':
+            # head-cut model: `output` is the 6-output list (3 scales x box,cls)
+            bboxes, scores, cls = _decode_yolov8_headcut(
+                output, img_h, img_w, self.img_size)
+        else:
+            if not getattr(self, '_debug_printed', False):
+                with open('/tmp/bball_debug.log', 'w') as f:
+                    f.write(f'output shape: {output.shape}, dtype: {output.dtype}\n')
+                    f.write(f'output stats: min={output.min().item():.6f} max={output.max().item():.6f} mean={output.mean().item():.6f}\n')
+                    flat = output if output.dim() == 2 else output[0]
+                    if flat.shape[0] < flat.shape[1]:
+                        flat = flat.transpose(0, 1)
+                    f.write(f'first 3 rows: {flat[:3].tolist()}\n')
+                    bboxes_part = flat[:, 0:4]
+                    cls_part = flat[:, 4:]
+                    f.write(f'\nbbox col range: min={bboxes_part.min().item():.4f} max={bboxes_part.max().item():.4f}\n')
+                    f.write(f'cls col range: min={cls_part.min().item():.4f} max={cls_part.max().item():.4f}\n')
+                    f.write(f'cls sigmoid max per col: {torch.sigmoid(cls_part).max(dim=0).values.tolist()}\n')
+                self._debug_printed = True
+            bboxes, scores, cls = self.decode_fn(output, img_h, img_w, self.img_size)
+            if not getattr(self, '_debug_decoded', False):
+                with open('/tmp/bball_debug.log', 'a') as f:
+                    f.write(f'\nafter decode:\n')
+                    f.write(f'  bboxes shape: {bboxes.shape}\n')
+                    f.write(f'  scores: min={scores.min().item():.6f} max={scores.max().item():.6f}\n')
+                    f.write(f'  scores > 0.001: {(scores > 0.001).sum().item()} / {len(scores)}\n')
+                    f.write(f'  scores > 0.5: {(scores > 0.5).sum().item()}\n')
+                    f.write(f'  top 5 scores: {scores.topk(5).values.tolist()}\n')
+                    f.write(f'  cls distribution: {torch.bincount(cls, minlength=4).tolist()}\n')
+                self._debug_decoded = True
 
         # confidence filter
         keep = scores > self.conf_threshold
@@ -242,6 +393,23 @@ class metric_target(Metric):
     def update(self, preds, target, is_convert_model=True):
         id = 0 if is_convert_model else 1
         _, info_imgs, ids = target
+        if self.eval.decode_mode == 'yolov8_headcut':
+            # head-cut model: preds is the 6-output list for a single batch
+            # (box,cls per scale); pass all outputs to the host decoder at once.
+            img_h = info_imgs[0][0]
+            img_w = info_imgs[1][0]
+            img_id = ids[0]
+            saved = self.eval.data_list
+            saved_img_ids = self.eval.img_ids
+            self.eval.data_list = self.data_list[id]
+            self.eval.img_ids = self.img_ids[id]
+            self.eval.process_output(
+                [p.cpu() for p in preds], img_h, img_w, img_id)
+            self.data_list[id] = self.eval.data_list
+            self.img_ids[id] = self.eval.img_ids
+            self.eval.data_list = saved
+            self.eval.img_ids = saved_img_ids
+            return
         for (output, img_h, img_w, img_id) in zip(
                 preds, info_imgs[0], info_imgs[1], ids):
             if output is None:
@@ -333,11 +501,25 @@ def demo():
     resize_size = size_pair(d.get('resize_size', img_size))
     crop_size = size_pair(d.get('crop_size', img_size))
 
-    # Load model
+    # Load model - prefer onnx2torch, fall back to onnxruntime on ANY conversion/inference error
+    backend = 'torch'
+    model = None
+    sess = None
     import onnx
     from statlas_quant.third_party.onnx2torch.onnx2torch import convert
-    model = convert(onnx.load(model_path))[0]
-    model.eval()
+    try:
+        model = convert(onnx.load(model_path))[0]
+        model.eval()
+        # Warmup forward to detect runtime issues (e.g. FP16 ops on CPU)
+        with torch.no_grad():
+            _dummy = torch.zeros(1, 3, *img_size)
+            model(_dummy)
+    except Exception as exc:
+        print(f'onnx2torch unusable ({type(exc).__name__}), falling back to onnxruntime')
+        import onnxruntime as ort
+        sess = ort.InferenceSession(model_path, providers=['CPUExecutionProvider'])
+        backend = 'onnxruntime'
+        model = None
 
     transform = transforms.Compose([
         transforms.Resize(resize_size),
@@ -384,22 +566,32 @@ def demo():
         w, h = img.size
 
         inp = transform(img).unsqueeze(0)
-        with torch.no_grad():
-            out = model(inp)
+        if backend == 'torch':
+            with torch.no_grad():
+                out = model(inp)
+            if isinstance(out, (list, tuple)) and len(out) > 1:
+                # multi-output (head-cut) model: keep all outputs as a list
+                out = [o if isinstance(o, torch.Tensor) else o[0]
+                       for o in out]
+            elif isinstance(out, (list, tuple)):
+                out = out[0]
+        else:
+            input_name = sess.get_inputs()[0].name
+            outs = sess.run(None, {input_name: inp.numpy()})
+            if len(outs) > 1:
+                out = [torch.from_numpy(o) for o in outs]
+            else:
+                out = torch.from_numpy(outs[0])
         if isinstance(out, dict):
             out = list(out.values())[0]
-        out = out[0]
+        if isinstance(out, torch.Tensor):
+            out = out[0]
 
-        # Confidence filter
-        cls_scores = out[:, 5:]
-        scores = out[:, 4] * cls_scores.max(dim=1).values
-        keep = scores > inference_conf
-        if keep.sum() > 0:
-            evaluator.process_output(out[keep], h, w, img_id)
+        evaluator.process_output(out, h, w, img_id)
 
         if (i + 1) % 10 == 0:
             print(f'  [{i+1}/{len(img_ids)}] img_id={img_id} {w}x{h} '
-                  f'dets={keep.sum().item()}')
+                  f'dets={len(evaluator.data_list)}')
 
     if args.pred_json:
         pred_json = args.pred_json

@@ -22,6 +22,9 @@ env.sh
 *.tar
 *.tar.gz
 
+# Locally downloaded/extracted toolchains (large binaries, not for Git)
+dependencies/
+
 # Reproducible quantization/evaluation/compile outputs.
 modes/*/outputs/**
 !modes/*/outputs/**/
@@ -31,3 +34,7 @@ modes/*/outputs/**
 modes/*/datasets/reports/**
 !modes/*/datasets/reports/.gitkeep
 *.csv
+
+# Calibration images are local data, not tracked in Git.
+modes/*/datasets/calibration/images/**
+!modes/*/datasets/calibration/images/.gitkeep

@@ -39,6 +39,24 @@ Conda 环境与编译器路径。
 原始 ONNX 框图分别输出到 `outputs/evaluation/float_visualizations` 和
 `outputs/evaluation/draft_float_visualizations`，不会覆盖量化模型结果。
 
+### 逐层误差比较
+
+```bash
+./run.sh soccer compare
+```
+
+Compare 对 `configs/compare.yaml` 中 `Compare.input_file` 指定的一张代表图分别执行浮点和
+量化前向，逐层计算余弦相似度，并生成：
+
+```text
+outputs/evaluation/compare/layer_compare.csv         # SDK 原始结果
+outputs/evaluation/compare/layer_compare_sorted.csv  # 按 1-cosine 降序
+outputs/evaluation/compare/REPORT.md                  # 误差最大的前 20 层
+```
+
+更换对比图片时修改 `Compare.input_file`。默认 `layer_dump: false`，因为 3328×1024 的所有
+中间张量可能占用数 GB；只有需要离线分析原始 NPY 时才改为 `true`。
+
 ## 2. 目录规范
 
 ```text
