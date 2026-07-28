@@ -59,7 +59,13 @@ def config(mode, name):
                    '{} {} config'.format(mode, name))
 
 
-def quant_command(mode):
+def quant_command(mode, model_path=None):
+    """Build the StatlasQuant PTQ command.
+
+    If model_path is given, the quant config's onnx_model is overridden to it
+    (used when running PTQ on a head-cut raw model). Otherwise the config is
+    used as-is.
+    """
     quant = require(executable('STATLAS_QUANT', DEFAULT_QUANT, 'StatlasQuant'),
                     'StatlasQuant')
     cmd = [quant, '--quant_cfg', config(mode, 'quant')]
@@ -67,6 +73,28 @@ def quant_command(mode):
     if mp_path.exists():
         cmd += ['--qparam_cfg', mp_path]
     return cmd
+
+
+def maybe_cut_head_raw(mode, dry_run):
+    """Cut the head off the original ONNX before PTQ, if it is a DFL head.
+
+    Writes ``model/<base>_headcut_raw.onnx``. Returns True if PTQ should run
+    on the head-cut model (i.e. the cut produced a file), False if PTQ should
+    run on the original model unchanged (YOLOv5, or cut was a no-op).
+    """
+    raw = original_model(mode)
+    headcut_raw = headcut_raw_model(mode)
+    if dry_run:
+        print('(would cut head off {} -> {})'.format(raw.name, headcut_raw.name))
+        return headcut_raw.exists()
+    # Always re-cut (cheap) so the head-cut raw tracks the current original.
+    cmd, _, _ = cut_head_command(mode, input_path=raw, output_path=headcut_raw)
+    try:
+        run_command(cmd, False)
+    except SystemExit:
+        return False
+    produced = headcut_raw.exists() and headcut_raw.stat().st_size > 0
+    return produced
 
 
 def eval_command(mode, operation='eval', cfg=None):
@@ -106,16 +134,16 @@ def deploy_model(mode):
     raise SystemExit('Multiple deploy models under {}: {}'.format(qdir, names))
 
 
-def headcut_model(mode):
-    """Path of the head-cut deploy model (next to the deploy ONNX).
+def headcut_raw_model(mode):
+    """Path of the head-cut *raw* model (under model/), used as PTQ input.
 
-    The head-cut model may not exist yet; callers check `.exists()`. It is
-    produced by `cut-head` (and auto after `quant`) only for DFL-head models
-    (YOLOv8/v11). For YOLOv5 the cut is a no-op and this file is absent.
+    ``quant`` cuts the head off the original ONNX *before* running StatlasQuant
+    when this is a DFL-head (v8/v11) model, so the deploy model produced by PTQ
+    is already headless and compiles directly. For YOLOv5 (no DFL head) the cut
+    is a no-op and this file is not created.
     """
-    deploy = deploy_model(mode)
-    return deploy.with_name(deploy.name.replace(
-        '_deploy_model.onnx', '_headcut_deploy_model.onnx'))
+    raw = original_model(mode)
+    return raw.with_name(raw.stem + '_headcut_raw.onnx')
 
 
 # Suffixes that indicate an ONNX is already a processed/cleaned version,
@@ -179,8 +207,12 @@ def clean_model(mode, dry_run):
     run_command(command, dry_run)
 
 
-def cut_head_command(mode):
-    """Build the head-cut command for the deploy ONNX.
+def cut_head_command(mode, input_path=None, output_path=None):
+    """Build the head-cut command for the original ONNX.
+
+    Cuts the DFL decode head off the original model, producing a headless
+    ONNX (raw 4D feature maps) that is used as PTQ input. Pass
+    input_path/output_path to cut an arbitrary ONNX.
 
     No-op for non-DFL heads (YOLOv5): the script detects the 4D->3D DFL
     reshape pattern and writes nothing, exiting 0.
@@ -189,15 +221,17 @@ def cut_head_command(mode):
                      'Python')
     script = require(ROOT / 'common' / 'tools' / 'cut_yolov8_head.py',
                      'cut_yolov8_head helper script')
-    deploy = deploy_model(mode)
-    headcut = headcut_model(mode)
-    return [python, script, '--input_model', deploy,
-            '--output_model', headcut], deploy, headcut
+    if input_path is None:
+        input_path = original_model(mode)
+    if output_path is None:
+        output_path = headcut_raw_model(mode)
+    return [python, script, '--input_model', input_path,
+            '--output_model', output_path], input_path, output_path
 
 
 def cut_head(mode, dry_run):
-    command, deploy, headcut = cut_head_command(mode)
-    print('deploy:  {}'.format(deploy))
+    command, raw, headcut = cut_head_command(mode)
+    print('raw:     {}'.format(raw))
     print('headcut: {}'.format(headcut))
     run_command(command, dry_run)
 
@@ -237,75 +271,23 @@ def compare_commands(mode):
 def compile_yaml(mode):
     """Resolve the compile config to use.
 
-    If a head-cut deploy model exists for this mode (DFL-head v8/v11 models
-    after `quant`), write a temp config that points `model:` at the head-cut
-    ONNX instead of the full deploy ONNX. The full head cannot be tiled by
-    the NPU compiler; the head-cut version (raw 4D feature maps) compiles.
-    The shared quant_param.yaml is reused as-is. Otherwise return the mode's
-    compile.yaml unchanged.
+    ``quant`` cuts the head off the original ONNX *before* PTQ, so the deploy
+    model produced by PTQ is already headless (raw 4D feature maps) and
+    compiles directly. The mode's compile.yaml is used unchanged.
     """
-    cfg = config(mode, 'compile')
-    headcut = headcut_model(mode)
-    if not headcut.exists():
-        return cfg
-    rel_headcut = headcut.relative_to(ROOT)
-    compile_out = MODES_ROOT / mode / 'outputs' / 'compile'
-    compile_out.mkdir(parents=True, exist_ok=True)
-    tmp = compile_out / '.compile_headcut_{}.yaml'.format(mode)
-    lines = cfg.read_text(encoding='utf-8').splitlines()
-    swapped = False
-    for i, line in enumerate(lines):
-        if line.strip().startswith('model:'):
-            lines[i] = 'model: {}  # auto: head-cut (DFL decode on host)'.format(
-                rel_headcut)
-            swapped = True
-            break
-    if not swapped:
-        raise SystemExit('compile.yaml has no model: line to swap for head-cut')
-    tmp.write_text('\n'.join(lines) + '\n', encoding='utf-8')
-    print('[compile] DFL head detected; compiling head-cut model: {}'.format(
-        rel_headcut))
-    return tmp
+    return config(mode, 'compile')
 
 
 def eval_yaml(mode):
     """Resolve the eval config to use.
 
-    For DFL-head models (v8/v11), `eval` should run the head-cut deploy model
-    so the host does the DFL/dist2bbox decode on quantized feature maps (the
-    real deployment path). The base eval.yaml stays on the full deploy model
-    + yolov8_raw so `float-eval` (which overrides --model with the original
-    FP32 ONNX) still works. When a head-cut model exists, write a temp config
-    swapping model -> head-cut and decode_mode -> yolov8_headcut.
+    ``quant`` cuts the head off the original ONNX *before* PTQ, so the deploy
+    model produced by PTQ is already headless (raw 4D feature maps). `eval`
+    runs that headless deploy model with the host-side DFL/dist2bbox decode
+    (decode_mode: yolov8_headcut in eval.yaml). The mode's eval.yaml is used
+    unchanged.
     """
-    cfg = config(mode, 'eval')
-    headcut = headcut_model(mode)
-    if not headcut.exists():
-        return cfg
-    rel_headcut = headcut.relative_to(ROOT)
-    eval_out = MODES_ROOT / mode / 'outputs' / 'evaluation'
-    eval_out.mkdir(parents=True, exist_ok=True)
-    tmp = eval_out / '.eval_headcut_{}.yaml'.format(mode)
-    lines = cfg.read_text(encoding='utf-8').splitlines()
-    swapped_model = False
-    swapped_decode = False
-    for i, line in enumerate(lines):
-        s = line.strip()
-        if not swapped_model and s.startswith('onnx_model:'):
-            lines[i] = '  onnx_model: {}  # auto: head-cut (host DFL decode)'.format(
-                rel_headcut)
-            swapped_model = True
-        elif not swapped_decode and s.startswith('decode_mode:'):
-            lines[i] = '    decode_mode: yolov8_headcut  # auto: host decode of head-cut maps'
-            swapped_decode = True
-    if not swapped_model:
-        raise SystemExit('eval.yaml has no onnx_model: line to swap for head-cut')
-    if not swapped_decode:
-        raise SystemExit('eval.yaml has no decode_mode: line to swap for head-cut')
-    tmp.write_text('\n'.join(lines) + '\n', encoding='utf-8')
-    print('[eval] DFL head detected; evaluating head-cut model: {}'.format(
-        rel_headcut))
-    return tmp
+    return config(mode, 'eval')
 
 
 def compile_command(mode, cfg=None):
@@ -473,13 +455,33 @@ def main():
         parser.error('mode and operation are required (or use --list)')
 
     if args.operation == 'quant':
-        run_command(quant_command(args.mode), args.dry_run)
-        # Auto-export a head-cut deploy model for DFL-head (v8/v11) models.
-        # No-op for YOLOv5. Skipped on --dry-run since no deploy was produced.
-        if args.dry_run:
-            print('(would also auto-run cut-head on the produced deploy model)')
+        # Pre-PTQ head cut for DFL-head (v8/v11) models: cut the head off the
+        # original ONNX first, then run PTQ on the head-cut model so the deploy
+        # model is already headless and compiles directly. No-op for YOLOv5.
+        headcut_raw = headcut_raw_model(args.mode)
+        use_headcut = maybe_cut_head_raw(args.mode, args.dry_run)
+        if use_headcut and not args.dry_run:
+            # Temporarily point quant.yaml's onnx_model at the head-cut raw.
+            quant_yaml = config(args.mode, 'quant')
+            text = quant_yaml.read_text(encoding='utf-8')
+            original_text = text
+            raw_line = '  onnx_model: {}'.format(headcut_raw.relative_to(ROOT))
+            new_lines = []
+            for line in text.splitlines():
+                if line.strip().startswith('onnx_model:'):
+                    new_lines.append(raw_line)
+                else:
+                    new_lines.append(line)
+            quant_yaml.write_text('\n'.join(new_lines) + '\n', encoding='utf-8')
+            try:
+                run_command(quant_command(args.mode), args.dry_run)
+            finally:
+                quant_yaml.write_text(original_text, encoding='utf-8')
         else:
-            run_command(cut_head_command(args.mode)[0], False)
+            run_command(quant_command(args.mode), args.dry_run)
+        # No post-PTQ cut: if PTQ ran on the head-cut raw, the deploy model is
+        # already headless. For YOLOv5 (no DFL head) the pre-cut was a no-op
+        # and the deploy model has no DFL head to cut anyway.
     elif args.operation in ('eval', 'visualize'):
         if args.operation == 'eval':
             cfg = eval_yaml(args.mode)
@@ -513,9 +515,26 @@ def main():
     elif args.operation == 'clean-model':
         clean_model(args.mode, args.dry_run)
     elif args.operation == 'all':
-        run_command(quant_command(args.mode), args.dry_run)
-        if not args.dry_run:
-            run_command(cut_head_command(args.mode)[0], False)
+        # quant already cuts the head pre-PTQ for DFL-head models.
+        headcut_raw = headcut_raw_model(args.mode)
+        use_headcut = maybe_cut_head_raw(args.mode, args.dry_run)
+        if use_headcut and not args.dry_run:
+            quant_yaml = config(args.mode, 'quant')
+            original_text = quant_yaml.read_text(encoding='utf-8')
+            new_lines = []
+            for line in original_text.splitlines():
+                if line.strip().startswith('onnx_model:'):
+                    new_lines.append('  onnx_model: {}'.format(
+                        headcut_raw.relative_to(ROOT)))
+                else:
+                    new_lines.append(line)
+            quant_yaml.write_text('\n'.join(new_lines) + '\n', encoding='utf-8')
+            try:
+                run_command(quant_command(args.mode), args.dry_run)
+            finally:
+                quant_yaml.write_text(original_text, encoding='utf-8')
+        else:
+            run_command(quant_command(args.mode), args.dry_run)
         run_command(eval_command(args.mode), args.dry_run)
         run_command(float_command(args.mode, 'float-eval'), args.dry_run)
         command, compiler_root = compile_command(
