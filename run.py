@@ -59,13 +59,8 @@ def config(mode, name):
                    '{} {} config'.format(mode, name))
 
 
-def quant_command(mode, model_path=None):
-    """Build the StatlasQuant PTQ command.
-
-    If model_path is given, the quant config's onnx_model is overridden to it
-    (used when running PTQ on a head-cut raw model). Otherwise the config is
-    used as-is.
-    """
+def quant_command(mode):
+    """Build the StatlasQuant PTQ command for the configured model."""
     quant = require(executable('STATLAS_QUANT', DEFAULT_QUANT, 'StatlasQuant'),
                     'StatlasQuant')
     cmd = [quant, '--quant_cfg', config(mode, 'quant')]
@@ -75,26 +70,9 @@ def quant_command(mode, model_path=None):
     return cmd
 
 
-def maybe_cut_head_raw(mode, dry_run):
-    """Cut the head off the original ONNX before PTQ, if it is a DFL head.
-
-    Writes ``model/<base>_headcut_raw.onnx``. Returns True if PTQ should run
-    on the head-cut model (i.e. the cut produced a file), False if PTQ should
-    run on the original model unchanged (YOLOv5, or cut was a no-op).
-    """
-    raw = original_model(mode)
-    headcut_raw = headcut_raw_model(mode)
-    if dry_run:
-        print('(would cut head off {} -> {})'.format(raw.name, headcut_raw.name))
-        return headcut_raw.exists()
-    # Always re-cut (cheap) so the head-cut raw tracks the current original.
-    cmd, _, _ = cut_head_command(mode, input_path=raw, output_path=headcut_raw)
-    try:
-        run_command(cmd, False)
-    except SystemExit:
-        return False
-    produced = headcut_raw.exists() and headcut_raw.stat().st_size > 0
-    return produced
+def run_quant(mode, dry_run):
+    """Quantize exactly the model selected by the mode's quant.yaml."""
+    run_command(quant_command(mode), dry_run)
 
 
 def eval_command(mode, operation='eval', cfg=None):
@@ -105,20 +83,8 @@ def eval_command(mode, operation='eval', cfg=None):
 
 
 def original_model(mode):
-    models = sorted((MODES_ROOT / mode / 'model').glob('*.onnx'))
-    if len(models) == 1:
-        return models[0]
-
-    quant_cfg = MODES_ROOT / mode / 'configs' / 'quant.yaml'
-    if quant_cfg.exists():
-        for line in quant_cfg.read_text(encoding='utf-8').splitlines():
-            if line.strip().startswith('onnx_model:'):
-                value = line.split(':', 1)[1].strip().strip('"\'')
-                selected = Path(value)
-                if not selected.is_absolute():
-                    selected = ROOT / selected
-                if selected.exists():
-                    return selected
+    """Return the single original ONNX export for float operations."""
+    return raw_model_path(mode)
 
 
 def deploy_model(mode):
@@ -135,20 +101,15 @@ def deploy_model(mode):
 
 
 def headcut_raw_model(mode):
-    """Path of the head-cut *raw* model (under model/), used as PTQ input.
-
-    ``quant`` cuts the head off the original ONNX *before* running StatlasQuant
-    when this is a DFL-head (v8/v11) model, so the deploy model produced by PTQ
-    is already headless and compiles directly. For YOLOv5 (no DFL head) the cut
-    is a no-op and this file is not created.
-    """
-    raw = original_model(mode)
+    """Deterministic output path for the explicit ``cut-head`` operation."""
+    raw = raw_model_path(mode)
     return raw.with_name(raw.stem + '_headcut_raw.onnx')
 
 
 # Suffixes that indicate an ONNX is already a processed/cleaned version,
 # not a "raw" export that needs cleaning.
 PROCESSED_SUFFIXES = (
+    '_headcut_raw.onnx',
     '_clean.onnx',
     '_calibrated_model.onnx',
     '_deploy_model.onnx',
@@ -222,7 +183,7 @@ def cut_head_command(mode, input_path=None, output_path=None):
     script = require(ROOT / 'common' / 'tools' / 'cut_yolov8_head.py',
                      'cut_yolov8_head helper script')
     if input_path is None:
-        input_path = original_model(mode)
+        input_path = raw_model_path(mode)
     if output_path is None:
         output_path = headcut_raw_model(mode)
     return [python, script, '--input_model', input_path,
@@ -269,24 +230,12 @@ def compare_commands(mode):
 
 
 def compile_yaml(mode):
-    """Resolve the compile config to use.
-
-    ``quant`` cuts the head off the original ONNX *before* PTQ, so the deploy
-    model produced by PTQ is already headless (raw 4D feature maps) and
-    compiles directly. The mode's compile.yaml is used unchanged.
-    """
+    """Return the mode's explicit compiler configuration."""
     return config(mode, 'compile')
 
 
 def eval_yaml(mode):
-    """Resolve the eval config to use.
-
-    ``quant`` cuts the head off the original ONNX *before* PTQ, so the deploy
-    model produced by PTQ is already headless (raw 4D feature maps). `eval`
-    runs that headless deploy model with the host-side DFL/dist2bbox decode
-    (decode_mode: yolov8_headcut in eval.yaml). The mode's eval.yaml is used
-    unchanged.
-    """
+    """Return the mode's explicit quantized-evaluation configuration."""
     return config(mode, 'eval')
 
 
@@ -296,6 +245,24 @@ def compile_command(mode, cfg=None):
     compiler = require(compiler_root / 'StatlasCompile', 'StatlasCompile')
     cfg = cfg or config(mode, 'compile')
     return [compiler, '-c', cfg], compiler_root
+
+
+def run_compile(mode, dry_run):
+    """Compile exactly the model and qparam selected by compile.yaml."""
+    command, compiler_root = compile_command(mode, compile_yaml(mode))
+    env = os.environ.copy()
+    old_path = env.get('LD_LIBRARY_PATH', '')
+    env['LD_LIBRARY_PATH'] = '{}{}'.format(
+        compiler_root / 'lib', ':' + old_path if old_path else '')
+    run_command(command, dry_run, env=env)
+
+
+def run_all(mode, dry_run):
+    """Run configured operations without implicitly generating model files."""
+    run_quant(mode, dry_run)
+    run_command(eval_command(mode), dry_run)
+    run_command(float_command(mode, 'float-eval'), dry_run)
+    run_compile(mode, dry_run)
 
 
 def validate(mode, dry_run):
@@ -455,33 +422,7 @@ def main():
         parser.error('mode and operation are required (or use --list)')
 
     if args.operation == 'quant':
-        # Pre-PTQ head cut for DFL-head (v8/v11) models: cut the head off the
-        # original ONNX first, then run PTQ on the head-cut model so the deploy
-        # model is already headless and compiles directly. No-op for YOLOv5.
-        headcut_raw = headcut_raw_model(args.mode)
-        use_headcut = maybe_cut_head_raw(args.mode, args.dry_run)
-        if use_headcut and not args.dry_run:
-            # Temporarily point quant.yaml's onnx_model at the head-cut raw.
-            quant_yaml = config(args.mode, 'quant')
-            text = quant_yaml.read_text(encoding='utf-8')
-            original_text = text
-            raw_line = '  onnx_model: {}'.format(headcut_raw.relative_to(ROOT))
-            new_lines = []
-            for line in text.splitlines():
-                if line.strip().startswith('onnx_model:'):
-                    new_lines.append(raw_line)
-                else:
-                    new_lines.append(line)
-            quant_yaml.write_text('\n'.join(new_lines) + '\n', encoding='utf-8')
-            try:
-                run_command(quant_command(args.mode), args.dry_run)
-            finally:
-                quant_yaml.write_text(original_text, encoding='utf-8')
-        else:
-            run_command(quant_command(args.mode), args.dry_run)
-        # No post-PTQ cut: if PTQ ran on the head-cut raw, the deploy model is
-        # already headless. For YOLOv5 (no DFL head) the pre-cut was a no-op
-        # and the deploy model has no DFL head to cut anyway.
+        run_quant(args.mode, args.dry_run)
     elif args.operation in ('eval', 'visualize'):
         if args.operation == 'eval':
             cfg = eval_yaml(args.mode)
@@ -494,12 +435,7 @@ def main():
         for command in compare_commands(args.mode):
             run_command(command, args.dry_run)
     elif args.operation == 'compile':
-        command, compiler_root = compile_command(args.mode, compile_yaml(args.mode))
-        env = os.environ.copy()
-        old_path = env.get('LD_LIBRARY_PATH', '')
-        env['LD_LIBRARY_PATH'] = '{}{}'.format(
-            compiler_root / 'lib', ':' + old_path if old_path else '')
-        run_command(command, args.dry_run, env=env)
+        run_compile(args.mode, args.dry_run)
     elif args.operation == 'cut-head':
         cut_head(args.mode, args.dry_run)
     elif args.operation == 'validate':
@@ -515,35 +451,7 @@ def main():
     elif args.operation == 'clean-model':
         clean_model(args.mode, args.dry_run)
     elif args.operation == 'all':
-        # quant already cuts the head pre-PTQ for DFL-head models.
-        headcut_raw = headcut_raw_model(args.mode)
-        use_headcut = maybe_cut_head_raw(args.mode, args.dry_run)
-        if use_headcut and not args.dry_run:
-            quant_yaml = config(args.mode, 'quant')
-            original_text = quant_yaml.read_text(encoding='utf-8')
-            new_lines = []
-            for line in original_text.splitlines():
-                if line.strip().startswith('onnx_model:'):
-                    new_lines.append('  onnx_model: {}'.format(
-                        headcut_raw.relative_to(ROOT)))
-                else:
-                    new_lines.append(line)
-            quant_yaml.write_text('\n'.join(new_lines) + '\n', encoding='utf-8')
-            try:
-                run_command(quant_command(args.mode), args.dry_run)
-            finally:
-                quant_yaml.write_text(original_text, encoding='utf-8')
-        else:
-            run_command(quant_command(args.mode), args.dry_run)
-        run_command(eval_command(args.mode), args.dry_run)
-        run_command(float_command(args.mode, 'float-eval'), args.dry_run)
-        command, compiler_root = compile_command(
-            args.mode, compile_yaml(args.mode) if not args.dry_run
-            else config(args.mode, 'compile'))
-        env = os.environ.copy()
-        env['LD_LIBRARY_PATH'] = str(compiler_root / 'lib') + (
-            ':' + env['LD_LIBRARY_PATH'] if env.get('LD_LIBRARY_PATH') else '')
-        run_command(command, args.dry_run, env=env)
+        run_all(args.mode, args.dry_run)
 
 
 if __name__ == '__main__':

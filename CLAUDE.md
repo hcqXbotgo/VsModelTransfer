@@ -17,8 +17,8 @@
 ./run.sh <mode> visualize          # 量化模型对 draft 图画框（不计 AP）
 ./run.sh <mode> float-visualize    # 原始 ONNX 对 draft 图画框
 ./run.sh <mode> compare            # 逐层余弦误差（→ outputs/evaluation/compare/）
-./run.sh <mode> compile            # 编译为平台模型（DFL 头模型自动用切头版）
-./run.sh <mode> cut-head            # 切检测头（v8/v11；v5 为 no-op，-> outputs/quant/*_headcut_*.onnx）
+./run.sh <mode> compile            # 按 configs/compile.yaml 编译为平台模型
+./run.sh <mode> cut-head           # 显式切检测头（v8/v11；v5 为 no-op，产物写入 model/）
 ./run.sh <mode> all                # quant + eval + float-eval + compile
 ./run.sh <mode> <op> --dry-run     # 只打印命令不执行
 ```
@@ -127,8 +127,9 @@ YOLOv8/v11 检测头在展平的网格轴上做 DFL（`Softmax`）+ dist2bbox
 （`time step assign init_group_data_secs failed`）。YOLOv5 头是加性解码
 （`Mul`/`Pow`/`Add`），能整模型内联编译。
 
-- `quant` 量化后**自动**对 DFL 头切头，产出 `outputs/quant/<model>_headcut_deploy_model.onnx`
-  + `*_headcut_deploy_model_spec.yaml`（host 解码规格）。切头是结构化检测，对 v5 是安全 no-op。
-- `compile` 自动检测并改用切头模型编译；`.mgz` 输出的是 6 个原始 4D 特征图，**DFL+解码+NMS
-  必须在 host 端做**（reg_max/stride/nc 见 spec）。`eval`/`float-eval` 走完整 ONNX 算 AP，不受影响。
+- `cut-head` 显式生成 `model/<model>_headcut_raw.onnx` 和 decode spec，不修改配置文件。
+- `quant` 只使用 `configs/quant.yaml` 指定的模型；`compile` 只使用
+  `configs/compile.yaml` 指定的模型和 qparam。两者都不会自动切头或替换路径。
+- 推荐顺序为 `cut-head → quant → eval → compile`。切头模型的 `.mgz` 输出是 6 个原始
+  4D 特征图，**DFL+解码+NMS 必须在 host 端做**（reg_max/stride/nc 见 spec）。
 - 详见 `modes/basketball/docs/COMPILE.md`、切头脚本 `common/tools/cut_yolov8_head.py`。

@@ -72,7 +72,7 @@ def write_yaml(out_path, names, model_name):
             '  observer: MinMaxObserver',
             '  symmetry: true',
             '  per_channel: false',
-            '  round_type: None',
+            '  round_type: Rounding',
             '  static: 1',
         ]
     with open(out_path, 'w', encoding='utf-8') as f:

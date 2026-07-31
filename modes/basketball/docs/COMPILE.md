@@ -33,16 +33,24 @@ time step assign init_group_data_secs failed for group N
 YOLOv5 头是**加性解码**（`Mul`/`Pow`/`Add`），与 backbone 同族算子，同尺寸
 69888 能正常编译。
 
-## 自动切头
+## 显式切头与量化
 
-切头已接入工作流，**无需手动操作**：
+切头、量化和编译是相互独立的操作，推荐按顺序显式执行：
 
-- `./run.sh basketball quant` 量化后，自动检测 DFL 头并在
-  `outputs/quant/` 产出 `<model>_headcut_deploy_model.onnx`，同时生成
-  `<model>_headcut_deploy_model_spec.yaml`（host 解码规格）。
-- `./run.sh basketball cut-head` 可单独重跑切头（不重量化）。
-- `./run.sh basketball compile` 自动检测到 head-cut 模型，改用它编译，产物为
-  `outputs/compile/yolov8n_int8.mgz`。
+```bash
+./run.sh basketball cut-head
+./run.sh basketball quant
+./run.sh basketball eval
+./run.sh basketball compile
+```
+
+- `cut-head` 只在 `model/` 下生成 `<model>_headcut_raw.onnx` 和对应的
+  decode spec，不修改任何 YAML。
+- `quant` 只量化 `configs/quant.yaml` 中 `model.onnx_model` 指定的模型。
+- `eval` 只使用 `configs/eval.yaml` 中指定的量化模型和 qparam。
+- `compile` 只使用 `configs/compile.yaml` 中指定的模型和 qparam。
+
+因此，重新切头或更换模型后，必须显式确认三个配置文件中的路径指向预期产物。
 
 切头脚本 `common/tools/cut_yolov8_head.py` 是**结构化检测**（按 4D->3D 空间展平
 的 Reshape 模式 + DFL 解码算子判定），不依赖节点命名，因此对 YOLOv8/v11 都适用。
@@ -61,7 +69,7 @@ YOLOv5 头是**加性解码**（`Mul`/`Pow`/`Add`），与 backbone 同族算子
 | `cv2.2/cv2.2.2` | `[1, 64, 32, 104]` | stride 32 box |
 | `cv3.2/cv3.2.2` | `[1, 4, 32, 104]` | stride 32 cls |
 
-精确的输出名、reg_max、stride、nc 见 `*_headcut_deploy_model_spec.yaml`。
+精确的输出名、reg_max、stride、nc 见 `*_headcut_raw_spec.yaml`。
 
 ## host 端解码（必须）
 
@@ -83,9 +91,9 @@ reg_max=16、nc=4、stride {8,16,32}，详见 spec 文件。
 + NMS（`common/evaluation/yolo_coco_metric.py::_decode_yolov8_headcut`）。这和部署链路
 完全一致，所以 `eval` 的 AP = 真实部署精度。
 
-`run.sh basketball eval` 自动检测切头模型，写临时 eval 配置（`model` -> 切头、
-`decode_mode` -> `yolov8_headcut`）；`modes/basketball/configs/eval.yaml` 基线保持
-完整 deploy + `yolov8_raw`，供 `float-eval` 用。
+`run.sh basketball eval` 不检测或替换模型，完全使用
+`modes/basketball/configs/eval.yaml`。评估切头模型时，该配置必须显式指向对应的
+deploy ONNX 和 qparam，并使用 `decode_mode: yolov8_headcut`。
 
 `float-eval`（浮点基线）跑**原始 FP32 完整 ONNX**（带 DFL 头，FP32 解码），是浮点
 上界。注意 `eval`（量化切头 + host 解码）和 `float-eval`（FP32 完整）口径不同：
@@ -94,4 +102,3 @@ reg_max=16、nc=4、stride {8,16,32}，详见 spec 文件。
 对比参考（实测）：完整量化模型 + INT8 头解码（旧口径）AP50=0.482；切头 + host FP32
 解码（新口径）AP50=0.692（2 图小样本，趋势是切头 host 解码更高，因消除了 INT8
 Softmax/解码损失）。完整 19 图数字见 `metric_result.csv`。
-
