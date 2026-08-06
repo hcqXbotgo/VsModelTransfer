@@ -1,0 +1,39 @@
+model: /home/dragonfly/wj_sdk/quant_folder/modes/demo_v8/outputs/quant/yolov8n_deploy_model.onnx
+quantize: /home/dragonfly/wj_sdk/quant_folder/modes/demo_v8/outputs/quant/yolov8n_quant_param.yaml
+output: modes/demo_v8/outputs/compile/yolov8n_640_640_int8_core1.mgz
+optimze_level: 2
+target: VS859
+mode: 0
+cluster_id: 0
+core_num: 1
+# 启用 NPU 硬件前处理：运行时直接喂 RGB888 packed（H264FileVideoDevice 的
+# sws_scale 输出），NPU 硬件完成 RGB->planar + /255 归一化 + int8 量化。
+# 否则 preprocess_en=0 时模型输入为 DATA/INT8，需调用方自行软件量化
+# （见 VsNpuModelImpl::SetInput 的 DATA 分支）。参考 config_yolov5s.yaml。
+preprocess_en: 1
+preprocess:
+  model_input_type: 1  # 0 - BGR, 1 - RGB
+  # runtime_input_type: 0=RGB_PACKED,1=RGB_PLANAR,2=BGR_PACKED,3=BGR_PLANAR,
+  #                     4=NV12,5=NV21,6=NV16,7=NV61
+  pre_input_type: 0    # RGB_PACKAGE：匹配 H264FileVideoDevice 的 AV_PIX_FMT_RGB24
+  # runtime_color_range: 0=BT709_FULL,1=BT709_LIMIT,2=BT601_FULL,3=BT601_LIMIT
+  pre_color_range: 0   # RGB->RGB 不涉及 YUV，色彩标准不生效，取默认
+  pre_shape:           # 模型输入尺寸 NCHW [1,3,960,960]
+    - 1
+    - 3
+    - 640
+    - 640
+  pre_stride:          # runtime 输入数据 stride（元素计），紧密排布=W
+    - 1
+    - 3
+    - 640
+    - 640
+  mean:                # YOLO 归一化：mean=0（与 quant.yaml transform 一致）
+    - 0.0
+    - 0.0
+    - 0.0
+  std:                 # YOLO 归一化：std=1（即纯 /255）
+    - 1.0
+    - 1.0
+    - 1.0
+output_tensor_cast: 1

@@ -76,7 +76,8 @@ def _decode_yolov8_raw(output, img_h, img_w, img_size):
     bboxes[:, 3] *= scale_y
     bboxes[:, 0] -= bboxes[:, 2] / 2
     bboxes[:, 1] -= bboxes[:, 3] / 2
-    cls_scores = torch.sigmoid(output[:, 4:4 + nc])
+    # cls_scores = torch.sigmoid(output[:, 4:4 + nc])
+    cls_scores = output[:, 4:4 + nc]
     scores, cls = cls_scores.max(dim=1)
     return bboxes, scores, cls.long()
 
@@ -138,6 +139,72 @@ def _decode_yolov8_headcut(outputs, img_h, img_w, img_size):
         scores, cls_idx = cls_s.max(dim=0)                     # [N]
         scores_all.append(scores)
         cls_all.append(cls_idx)
+
+        # ------------------------- Debug -------------------------
+        '''
+        raw = cls.reshape(nc, n)
+        max_logit, max_class = raw.max(dim=0)
+
+        zero_mask = max_logit == 0
+        all_zero_mask = (raw == 0).all(dim=0)
+
+        print("max logit zero:", zero_mask.sum().item())
+        print("all classes zero:", all_zero_mask.sum().item())
+
+        print(
+            "winning classes:",
+            torch.bincount(
+                max_class[zero_mask],
+                minlength=nc,
+            ).tolist()
+        )
+
+        indices = torch.nonzero(max_logit == 0, as_tuple=False).flatten()
+
+        for index in indices[:100]:
+            k = index.item()
+            y = k // w
+            x = k % w
+
+            print(
+                "scale:", (h, w),
+                "position:", (y, x),
+                "class:", max_class[k].item(),
+                "raw:", raw[:, k].tolist(),
+            )
+
+        raw_cls = cls.reshape(nc, n)
+
+        max_logit, max_class = raw_cls.max(dim=0)
+
+        print(
+            "cls shape:", tuple(cls.shape),
+            "dtype:", cls.dtype,
+            "device:", cls.device,
+        )
+        print(
+            "raw cls:",
+            "min =", raw_cls.min().item(),
+            "max =", raw_cls.max().item(),
+            "mean =", raw_cls.float().mean().item(),
+        )
+        print(
+            "max logit:",
+            "min =", max_logit.min().item(),
+            "max =", max_logit.max().item(),
+        )
+
+        print("max_logit == 0:",
+            torch.isclose(max_logit.float(),
+                            torch.tensor(0.0, device=max_logit.device),
+                            atol=1e-6).sum().item())
+
+        print("max_logit ~= -0.571:",
+            torch.isclose(max_logit.float(),
+                            torch.tensor(-0.571, device=max_logit.device),
+                            atol=1e-3).sum().item())
+        '''
+        # ---------------------------------------------------------
 
     bboxes = torch.cat(boxes_all, dim=0)
     scores = torch.cat(scores_all, dim=0)
@@ -338,6 +405,532 @@ class CocoEvalBase:
         print('Saved {} visualization image(s) to {}'.format(
             saved, self.vis_dir))
 
+    # 增加评估指标后处理
+    @staticmethod
+    def _mean_valid(values):
+        """计算COCOeval数组中所有非负有效值的均值。"""
+        values = np.asarray(values, dtype=np.float64)
+        values = values[values >= 0]
+
+        if values.size == 0:
+            return 0.0
+
+        return float(values.mean())
+
+    @staticmethod
+    def _best_precision_recall(
+        precision_curve,
+        recall_thresholds,
+    ):
+        """
+        在IoU=0.5的COCO插值PR曲线上选择F1最高的P/R点。
+
+        注意：
+        这里的P/R使用COCOeval插值曲线计算，格式与YOLO相同，
+        但数值可能与Ultralytics DetMetrics存在少量差异。
+        """
+        precision_curve = np.asarray(
+            precision_curve,
+            dtype=np.float64,
+        )
+
+        recall_thresholds = np.asarray(
+            recall_thresholds,
+            dtype=np.float64,
+        )
+
+        valid = precision_curve >= 0
+
+        if not valid.any():
+            return 0.0, 0.0
+
+        precision = precision_curve[valid]
+        recall = recall_thresholds[valid]
+
+        f1 = (
+            2.0
+            * precision
+            * recall
+            / (precision + recall + 1e-16)
+        )
+
+        best_index = int(np.argmax(f1))
+
+        return (
+            float(precision[best_index]),
+            float(recall[best_index]),
+        )
+
+    @staticmethod
+    def _format_metric_value(value):
+        """使用接近Ultralytics日志的数字格式。"""
+        return "{:.3g}".format(float(value))
+
+    def _build_yolo_style_table(self, coco_eval):
+        """
+        根据COCOeval结果生成YOLO风格的总指标和分类指标表格。
+
+        COCOeval precision形状：
+            [IoU, Recall, Category, Area, MaxDet]
+        """
+        precision = coco_eval.eval.get("precision")
+
+        if precision is None:
+            return "No COCO precision data."
+
+        evaluated_image_ids = set(
+            int(image_id)
+            for image_id in coco_eval.params.imgIds
+        )
+
+        category_ids = list(
+            coco_eval.params.catIds
+        )
+
+        categories = {
+            category["id"]: category["name"]
+            for category in self.coco.loadCats(category_ids)
+        }
+
+        recall_thresholds = (
+            coco_eval.params.recThrs
+        )
+
+        # area=all位于索引0。
+        area_index = 0
+
+        # 使用最后一个maxDet，通常为100或配置中的最大值。
+        max_det_index = -1
+
+        annotations = [
+            annotation
+            for annotation
+            in self.coco.dataset.get("annotations", [])
+            if (
+                int(annotation["image_id"])
+                in evaluated_image_ids
+                and not annotation.get("iscrowd", 0)
+            )
+        ]
+
+        category_instance_count = {
+            category_id: 0
+            for category_id in category_ids
+        }
+
+        category_image_ids = {
+            category_id: set()
+            for category_id in category_ids
+        }
+
+        for annotation in annotations:
+            category_id = annotation["category_id"]
+
+            if category_id not in category_instance_count:
+                continue
+
+            category_instance_count[category_id] += 1
+            category_image_ids[category_id].add(
+                int(annotation["image_id"])
+            )
+
+        rows = []
+
+        # ----------------------------------------------------
+        # all行
+        # ----------------------------------------------------
+
+        all_precision = precision[
+            :,
+            :,
+            :,
+            area_index,
+            max_det_index,
+        ]
+
+        all_map50_95 = self._mean_valid(
+            all_precision
+        )
+
+        all_map50 = self._mean_valid(
+            precision[
+                0,
+                :,
+                :,
+                area_index,
+                max_det_index,
+            ]
+        )
+
+        # 聚合所有具有GT的类别的IoU=0.5 PR曲线。
+        class_precision_curves = []
+
+        for category_index, category_id in enumerate(
+            category_ids
+        ):
+            if category_instance_count[category_id] == 0:
+                continue
+
+            curve = precision[
+                0,
+                :,
+                category_index,
+                area_index,
+                max_det_index,
+            ].astype(np.float64)
+
+            # -1表示该点无效，转换为NaN以便跨类别求均值。
+            curve[curve < 0] = np.nan
+            class_precision_curves.append(curve)
+
+        if class_precision_curves:
+            with np.errstate(
+                invalid="ignore",
+                divide="ignore",
+            ):
+                mean_precision_curve = np.nanmean(
+                    np.stack(
+                        class_precision_curves,
+                        axis=0,
+                    ),
+                    axis=0,
+                )
+
+            mean_precision_curve = np.nan_to_num(
+                mean_precision_curve,
+                nan=-1.0,
+            )
+
+            all_precision_value, all_recall_value = (
+                self._best_precision_recall(
+                    mean_precision_curve,
+                    recall_thresholds,
+                )
+            )
+        else:
+            all_precision_value = 0.0
+            all_recall_value = 0.0
+
+        rows.append(
+            (
+                "all",
+                len(evaluated_image_ids),
+                len(annotations),
+                all_precision_value,
+                all_recall_value,
+                all_map50,
+                all_map50_95,
+            )
+        )
+
+        # ----------------------------------------------------
+        # 各类别行
+        # ----------------------------------------------------
+
+        for category_index, category_id in enumerate(
+            category_ids
+        ):
+            category_precision = precision[
+                :,
+                :,
+                category_index,
+                area_index,
+                max_det_index,
+            ]
+
+            category_map50_95 = self._mean_valid(
+                category_precision
+            )
+
+            category_map50 = self._mean_valid(
+                precision[
+                    0,
+                    :,
+                    category_index,
+                    area_index,
+                    max_det_index,
+                ]
+            )
+
+            category_pr_curve = precision[
+                0,
+                :,
+                category_index,
+                area_index,
+                max_det_index,
+            ]
+
+            category_p, category_r = (
+                self._best_precision_recall(
+                    category_pr_curve,
+                    recall_thresholds,
+                )
+            )
+
+            rows.append(
+                (
+                    categories.get(
+                        category_id,
+                        str(category_id),
+                    ),
+                    len(
+                        category_image_ids[
+                            category_id
+                        ]
+                    ),
+                    category_instance_count[
+                        category_id
+                    ],
+                    category_p,
+                    category_r,
+                    category_map50,
+                    category_map50_95,
+                )
+            )
+
+        # ----------------------------------------------------
+        # 格式化为Ultralytics风格表格
+        # ----------------------------------------------------
+
+        header_format = (
+            "{:>22}"
+            "{:>11}"
+            "{:>11}"
+            "{:>11}"
+            "{:>11}"
+            "{:>11}"
+            "{:>11}"
+        )
+
+        lines = [
+            header_format.format(
+                "Class",
+                "Images",
+                "Instances",
+                "Box(P",
+                "R",
+                "mAP50",
+                "mAP50-95",
+            )
+        ]
+
+        for (
+            class_name,
+            image_count,
+            instance_count,
+            precision_value,
+            recall_value,
+            map50,
+            map50_95,
+        ) in rows:
+            lines.append(
+                header_format.format(
+                    class_name,
+                    image_count,
+                    instance_count,
+                    self._format_metric_value(
+                        precision_value
+                    ),
+                    self._format_metric_value(
+                        recall_value
+                    ),
+                    self._format_metric_value(
+                        map50
+                    ),
+                    self._format_metric_value(
+                        map50_95
+                    ),
+                )
+            )
+
+        return "\n".join(lines)
+
+    def _build_empty_yolo_style_table(self):
+        """没有任何预测时生成全0的YOLO风格表格。"""
+        evaluated_image_ids = set(
+            int(image_id)
+            for image_id in self.img_ids
+        )
+
+        category_ids = sorted(
+            self.coco.getCatIds()
+        )
+
+        categories = {
+            category["id"]: category["name"]
+            for category in self.coco.loadCats(
+                category_ids
+            )
+        }
+
+        annotations = [
+            annotation
+            for annotation
+            in self.coco.dataset.get("annotations", [])
+            if (
+                int(annotation["image_id"])
+                in evaluated_image_ids
+                and not annotation.get("iscrowd", 0)
+            )
+        ]
+
+        header_format = (
+            "{:>22}"
+            "{:>11}"
+            "{:>11}"
+            "{:>11}"
+            "{:>11}"
+            "{:>11}"
+            "{:>11}"
+        )
+
+        lines = [
+            header_format.format(
+                "Class",
+                "Images",
+                "Instances",
+                "Box(P",
+                "R",
+                "mAP50",
+                "mAP50-95",
+            )
+        ]
+
+        lines.append(
+            header_format.format(
+                "all",
+                len(evaluated_image_ids),
+                len(annotations),
+                "0",
+                "0",
+                "0",
+                "0",
+            )
+        )
+
+        for category_id in category_ids:
+            category_annotations = [
+                annotation
+                for annotation in annotations
+                if annotation["category_id"] == category_id
+            ]
+
+            category_images = {
+                int(annotation["image_id"])
+                for annotation
+                in category_annotations
+            }
+
+            lines.append(
+                header_format.format(
+                    categories.get(
+                        category_id,
+                        str(category_id),
+                    ),
+                    len(category_images),
+                    len(category_annotations),
+                    "0",
+                    "0",
+                    "0",
+                    "0",
+                )
+            )
+
+        return "\n".join(lines)
+
+    # 更新
+    def compute(self):
+        self.save_visualizations()
+
+        if self.visualize_only:
+            return (
+                0.0,
+                0.0,
+                "Visualization only; "
+                "no ground-truth metrics.",
+            )
+
+        if not self.data_list:
+            table = self._build_empty_yolo_style_table()
+
+            return (
+                0.0,
+                0.0,
+                table + "\n\nNo predictions.",
+            )
+
+        file_descriptor, temporary_path = (
+            tempfile.mkstemp(
+                suffix=".json"
+            )
+        )
+
+        os.close(file_descriptor)
+
+        try:
+            with open(
+                temporary_path,
+                "w",
+                encoding="utf-8",
+            ) as output_file:
+                json.dump(
+                    self.data_list,
+                    output_file,
+                )
+
+            coco_dt = self.coco.loadRes(
+                temporary_path
+            )
+
+            from pycocotools.cocoeval import COCOeval
+
+            coco_eval = COCOeval(
+                self.coco,
+                coco_dt,
+                "bbox",
+            )
+
+            coco_eval.params.imgIds = sorted(
+                self.img_ids
+            )
+
+            # 捕获COCOeval自己的输出，
+            # 避免和YOLO表格交叉在一起。
+            coco_output = io.StringIO()
+
+            with contextlib.redirect_stdout(
+                coco_output
+            ):
+                coco_eval.evaluate()
+                coco_eval.accumulate()
+                coco_eval.summarize()
+
+            yolo_table = (
+                self._build_yolo_style_table(
+                    coco_eval
+                )
+            )
+
+            summary = (
+                yolo_table
+                + "\n\n"
+                + "COCOeval summary:\n"
+                + coco_output.getvalue()
+            )
+
+            return (
+                float(coco_eval.stats[0]),
+                float(coco_eval.stats[1]),
+                summary,
+            )
+
+        finally:
+            try:
+                os.unlink(temporary_path)
+            except FileNotFoundError:
+                pass
+
+    '''
     def compute(self):
         self.save_visualizations()
         if self.visualize_only:
@@ -357,6 +950,7 @@ class CocoEvalBase:
             cocoEval.summarize()
         os.unlink(tmp)
         return cocoEval.stats[0], cocoEval.stats[1], s.getvalue()
+    '''
 
 
 # ── StatlasQuant metric entry point ────────────────────
@@ -448,9 +1042,26 @@ class metric_target(Metric):
         ap50_95, ap50, _ = self.results[0 if is_convert_model else 1]
         return {'AP50_95': ap50_95, 'AP50': ap50}
 
+    # 更新
     def get_result_string(self, is_convert_model=True):
-        ap50_95, ap50, summary = self.results[0 if is_convert_model else 1]
-        return f'AP50_95: {ap50_95}, AP50: {ap50}.\nSummary: {summary}'
+        ap50_95, ap50, summary = self.results[
+            0 if is_convert_model else 1
+        ]
+
+        if summary:
+            return summary
+
+        return (
+            "AP50_95: {:.6f}, "
+            "AP50: {:.6f}"
+        ).format(
+            ap50_95,
+            ap50,
+        )
+
+    # def get_result_string(self, is_convert_model=True):
+    #     ap50_95, ap50, summary = self.results[0 if is_convert_model else 1]
+    #     return f'AP50_95: {ap50_95}, AP50: {ap50}.\nSummary: {summary}'
 
 
 # ── Standalone demo mode ──────────────────────────────
@@ -602,7 +1213,7 @@ def demo():
             json.dump(evaluator.data_list, f, indent=2)
         print('Predictions: {}'.format(pred_json))
 
-    print()
+    print('\n')
     ap50_95, ap50, summary = evaluator.compute()
     if args.skip_metric:
         return
