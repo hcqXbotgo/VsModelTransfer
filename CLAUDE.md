@@ -14,8 +14,6 @@
 ./run.sh <mode> quant              # PTQ 量化（→ outputs/quant/）
 ./run.sh <mode> eval               # 量化模型 AP（→ outputs/evaluation/metric_result.csv）
 ./run.sh <mode> float-eval         # 原始 ONNX AP 基线（→ outputs/evaluation/float_visualizations/）
-./run.sh <mode> visualize          # 量化模型对 draft 图画框（不计 AP）
-./run.sh <mode> float-visualize    # 原始 ONNX 对 draft 图画框
 ./run.sh <mode> compare            # 逐层余弦误差（→ outputs/evaluation/compare/）
 ./run.sh <mode> compile            # 按 configs/compile.yaml 编译为平台模型
 ./run.sh <mode> cut-head           # 显式切检测头（v8/v11；v5 为 no-op，产物写入 model/）
@@ -99,18 +97,6 @@ cd /home/dragonfly/wj_sdk/quant_folder
 
 `compare` 的代表图通过 `modes/<mode>/configs/compare.yaml` 的 `Compare.input_file` 指定；
 `layer_dump: false` 默认不落盘中间 NPY（3328×1024 单图张量可达数 GB）。
-
-## 添加/审核数据（仅 soccer）
-
-```bash
-./run.sh soccer add-calibration /path/to/calibration_images   # 加校准图
-./run.sh soccer import-eval                                    # 把 draft 合并到正式 evaluation
-./run.sh soccer validate                                       # 入箱后必须校验
-```
-
-draft 路径：`modes/soccer/datasets/draft/{images,annotations/instances.json}`。
-正式评估路径：`modes/soccer/datasets/evaluation/{images,annotations/instances.json}`。
-**draft 永远不能直接用来算 AP**，必须人工审核后通过 `import-eval` 合并。
 
 ## 量化关键约束（soccer）
 

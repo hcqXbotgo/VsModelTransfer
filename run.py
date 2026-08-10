@@ -197,16 +197,14 @@ def cut_head(mode, dry_run):
     run_command(command, dry_run)
 
 
-def float_command(mode, operation):
+def float_eval_command(mode):
     python = require(executable('STATLAS_PYTHON', DEFAULT_PYTHON, 'python3'),
                      'Python')
     evaluator = require(ROOT / 'common' / 'evaluation' / 'yolo_coco_metric.py',
                         'float ONNX evaluator')
-    config_name = 'eval' if operation == 'float-eval' else 'visualize'
-    vis_name = ('float_visualizations' if operation == 'float-eval'
-                else 'draft_float_visualizations')
-    vis_dir = MODES_ROOT / mode / 'outputs' / 'evaluation' / vis_name
-    return [python, evaluator, '--config', config(mode, config_name),
+    vis_dir = (MODES_ROOT / mode / 'outputs' / 'evaluation' /
+               'float_visualizations')
+    return [python, evaluator, '--config', config(mode, 'eval'),
             '--model', original_model(mode), '--num', '0',
             '--vis-dir', vis_dir]
 
@@ -261,7 +259,7 @@ def run_all(mode, dry_run):
     """Run configured operations without implicitly generating model files."""
     run_quant(mode, dry_run)
     run_command(eval_command(mode), dry_run)
-    run_command(float_command(mode, 'float-eval'), dry_run)
+    run_command(float_eval_command(mode), dry_run)
     run_compile(mode, dry_run)
 
 
@@ -284,44 +282,6 @@ def validate(mode, dry_run):
           len(list((mode_root / 'datasets' / 'calibration' / 'images').glob('*'))))
     print('evaluation images:',
           len(list((mode_root / 'datasets' / 'evaluation' / 'images').glob('*'))))
-
-
-def add_calibration(mode, paths, dry_run):
-    if not paths:
-        raise SystemExit('add-calibration requires one or more image paths')
-    tool = require(MODES_ROOT / mode / 'tools' / 'dataset.py',
-                   '{} dataset manager'.format(mode))
-    python = require(executable('STATLAS_PYTHON', DEFAULT_PYTHON, 'python3'),
-                     'Python')
-    dataset_root = MODES_ROOT / mode / 'datasets'
-    run_command([python, tool, 'add', '--root', dataset_root,
-                 '--kind', 'calibration'] + [Path(item) for item in paths], dry_run)
-
-
-def import_eval(mode, paths, source, dry_run):
-    mode_root = MODES_ROOT / mode
-    if not paths:
-        annotations = mode_root / 'datasets' / 'draft' / 'annotations' / 'instances.json'
-        images = mode_root / 'datasets' / 'draft' / 'images'
-    elif len(paths) == 2:
-        annotations = Path(paths[0])
-        images = Path(paths[1])
-    else:
-        raise SystemExit(
-            'import-eval accepts either no paths (use draft) or: '
-            '<COCO annotations.json> <images directory>')
-    tool = require(MODES_ROOT / mode / 'tools' / 'dataset.py',
-                   '{} dataset manager'.format(mode))
-    python = require(executable('STATLAS_PYTHON', DEFAULT_PYTHON, 'python3'),
-                     'Python')
-    annotations = require(annotations, 'reviewed COCO annotations')
-    images = require(images, 'reviewed image directory')
-    dataset_root = MODES_ROOT / mode / 'datasets'
-    run_command([python, tool, 'import-coco', '--root', dataset_root,
-                 '--annotations', annotations, '--images', images,
-                 '--source', source], dry_run)
-    if not dry_run:
-        validate(mode, False)
 
 
 def print_status(mode):
@@ -401,13 +361,8 @@ def main():
     parser.add_argument('mode', nargs='?', choices=modes)
     parser.add_argument(
         'operation', nargs='?',
-        choices=('quant', 'eval', 'visualize', 'float-eval',
-                 'float-visualize', 'compare', 'compile', 'cut-head',
-                 'validate', 'status', 'all', 'add-calibration',
-                 'import-eval', 'clean', 'clean-model'))
-    parser.add_argument('paths', nargs='*', help='Image paths for add operations')
-    parser.add_argument('--source', default='manual_coco_annotation',
-                        help='Annotation source recorded by import-eval')
+        choices=('quant', 'eval', 'float-eval', 'compare', 'compile', 'cut-head',
+                 'validate', 'status', 'all', 'clean', 'clean-model'))
     parser.add_argument('--list', action='store_true', help='List available modes')
     parser.add_argument('--dry-run', action='store_true', help='Print only')
     parser.add_argument('--scope', default='quant',
@@ -423,14 +378,11 @@ def main():
 
     if args.operation == 'quant':
         run_quant(args.mode, args.dry_run)
-    elif args.operation in ('eval', 'visualize'):
-        if args.operation == 'eval':
-            cfg = eval_yaml(args.mode)
-        else:
-            cfg = config(args.mode, args.operation)
-        run_command(eval_command(args.mode, args.operation, cfg), args.dry_run)
-    elif args.operation in ('float-eval', 'float-visualize'):
-        run_command(float_command(args.mode, args.operation), args.dry_run)
+    elif args.operation == 'eval':
+        run_command(eval_command(args.mode, 'eval', eval_yaml(args.mode)),
+                    args.dry_run)
+    elif args.operation == 'float-eval':
+        run_command(float_eval_command(args.mode), args.dry_run)
     elif args.operation == 'compare':
         for command in compare_commands(args.mode):
             run_command(command, args.dry_run)
@@ -442,10 +394,6 @@ def main():
         validate(args.mode, args.dry_run)
     elif args.operation == 'status':
         print_status(args.mode)
-    elif args.operation == 'add-calibration':
-        add_calibration(args.mode, args.paths, args.dry_run)
-    elif args.operation == 'import-eval':
-        import_eval(args.mode, args.paths, args.source, args.dry_run)
     elif args.operation == 'clean':
         clean_mode(args.mode, args.scope, args.dry_run)
     elif args.operation == 'clean-model':
