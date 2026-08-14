@@ -1,0 +1,19 @@
+# Auto-generated YOLOv5 host-decode specification.
+source: /home/dragonfly/wj_sdk/quant_folder/modes/soccer/model/yolov5n_falcon2_3328_1024_clean.onnx
+layout: NHWC
+anchors_per_scale: 3
+num_classes: 80
+properties_per_anchor: 85
+outputs:
+  - name: yolov5_stride8_output
+    stride: 8
+    shape: [1, 128, 416, 255]
+  - name: yolov5_stride16_output
+    stride: 16
+    shape: [1, 64, 208, 255]
+  - name: yolov5_stride32_output
+    stride: 32
+    shape: [1, 32, 104, 255]
+
+# Host must apply: xy=(sigmoid*2-0.5+grid)*stride,
+# wh=(sigmoid*2)^2*anchor, score=objectness*class, then NMS.

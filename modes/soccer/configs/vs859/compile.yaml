@@ -1,0 +1,5 @@
+model: modes/soccer/outputs/quant/yolov5n_falcon2_3328_1024_clean_headcut_raw_deploy_model.onnx
+quantize: modes/soccer/outputs/quant/yolov5n_falcon2_3328_1024_clean_headcut_raw_quant_param.yaml
+output: modes/soccer/outputs/compile/vs859/yolov5n_falcon2_3328_1024_clean.mgz
+optimze_level: 1
+log_level: 4

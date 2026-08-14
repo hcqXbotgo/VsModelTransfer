@@ -1,7 +1,8 @@
-# Basketball 模型量化与编译端到端运行手册
+# Basketball 模型量化与双平台编译端到端运行手册
 
-本仓库用于把 Basketball YOLO ONNX 模型处理为 Statlas 工具链可量化、可评估、可在
-VS859 上部署的模型。本文只以 `basketball` 当前目录和配置为主线，覆盖：
+本仓库用于把 Basketball YOLO ONNX 模型处理为可量化、可评估，并可部署到
+VS859 或 RK3576 的模型。本文以 `basketball` 当前配置为主线，并在各平台章节中说明
+其他模式的构建方式与差异。完整流程为：
 
 ```text
 准备校准集和评估集
@@ -10,19 +11,21 @@ VS859 上部署的模型。本文只以 `basketball` 当前目录和配置为主
   -> YOLOv8 DFL 检测头裁切
   -> PTQ / 混合精度量化
   -> 浮点与量化模型评估
-  -> StatlasCompile 编译
-  -> .mgz 交付检查
+  -> VS859: StatlasQuant + StatlasCompile -> .mgz
+  -> RK3576: RKNN Toolkit2 量化/转换 -> .rknn
+  -> 目标板交付检查
 ```
 
-> **执行前必须先对齐配置。** 当前工作区中的篮球链路并不一致：
+> **执行前必须先对齐配置。** VS859 的 `configs/vs859/quant.yaml`、`eval.yaml` 和
+> `compile.yaml` 必须使用
+> 同一个模型基名和输入尺寸，不能把旧量化参数、不同尺寸的 deploy ONNX 或其他模型的
+> 编译配置混在同一次构建中。
 >
-> - `quant.yaml` 选择的模型名包含 `h1024_w3328`；
-> - `eval.yaml` 和 `compile.yaml` 仍引用 `h1920_w1920` 量化产物；
-> - `compile.yaml` 引用 head-cut 量化产物，但 `quant` 不会自动执行 `cut-head`；
-> - `quant.yaml` 的校准目录当前是 `modes/soccer/datasets/calibration/images`；
-> - `modes/basketball/model/` 当前没有可供 `clean-model` 或 `cut-head` 选择的原始 ONNX。
-> - 当前 `eval.yaml` 使用 `decode_mode: yolov8_raw`，不能解码 head-cut 的 6 路 4D 输出；
-> - 当前校准集与评估集存在一张内容完全相同的图片，正式评估前必须消除数据泄漏。
+> 当前 Basketball 输入尺寸和校准目录已经统一为 `1024 x 3328` 与
+> `modes/basketball/datasets/calibration/images`。但 VS859 的 `quant.yaml`/`compile.yaml`
+> 走 head-cut 分支，`eval.yaml` 仍指向完整 raw deploy 模型并使用 `yolov8_raw` 解码。
+> 因此再次执行完整端到端评估前，仍须选择“完整模型评估”或“head-cut 评估”分支，
+> 并将三个 YAML 的模型基名统一；不能直接把当前三个配置视为同一次 PTQ 链路。
 >
 > 不要直接连续执行全流程。先按本文“配置一致性检查”统一模型基名、输入尺寸和数据路径。
 
@@ -36,7 +39,9 @@ quant_folder/
 │   ├── evaluation/                         # COCO loader、metric、compare 汇总
 │   └── tools/
 │       ├── clean_model.py                  # OnnxConvertTool 包装器
-│       └── cut_yolov8_head.py              # DFL 检测头裁切
+│       ├── cut_yolo_head.py                 # YOLOv5/v8/v11 裁切分发器
+│       ├── cut_yolov5_head.py               # YOLOv5 三尺度 NHWC 输出裁切
+│       └── cut_yolov8_head.py               # YOLOv8/11 DFL 检测头裁切
 └── modes/basketball/
     ├── model/                              # 原始及处理后的 ONNX
     ├── datasets/
@@ -45,14 +50,20 @@ quant_folder/
     │       ├── images/                     # 正式评估图片
     │       └── annotations/instances.json  # COCO 检测标注
     ├── configs/
-    │   ├── quant.yaml                      # PTQ 模型、精度、校准集和前处理
-    │   ├── eval.yaml                       # 量化模型评估
-    │   ├── compare.yaml                    # 逐层误差比较
-    │   └── compile.yaml                    # VS859 编译与硬件前处理
+    │   ├── vs859/
+    │   │   ├── quant.yaml                  # Statlas PTQ
+    │   │   ├── eval.yaml                   # 量化模型评估
+    │   │   ├── compare.yaml                # 逐层误差比较
+    │   │   └── compile.yaml                # MGZ 编译与硬件前处理
+    │   └── rk3576/
+    │       ├── rknn.yaml                   # RKNN 量化、转换和校准配置
+    │       └── eval.yaml                   # RKNN COCO 评估与解码配置
     └── outputs/
         ├── quant/                          # deploy ONNX 和 quant param
         ├── evaluation/                     # AP、可视化、逐层比较
-        └── compile/                        # 最终 .mgz
+        └── compile/
+            ├── vs859/                     # StatlasCompile 生成的 .mgz
+            └── rk3576/                    # RKNN、manifest 和校准列表
 ```
 
 源文件与产物要分清：原始 ONNX、图片、COCO JSON 和 YAML 是流程输入；`outputs/` 下的文件是
@@ -60,23 +71,9 @@ quant_folder/
 
 ## 2. 环境配置与命令格式
 
-首次使用时创建本机环境文件：
+### 2.1 公共命令格式
 
-```bash
-cd /home/dragonfly/wj_sdk/quant_folder
-cp env.example.sh env.sh
-vim env.sh
-```
-
-至少确认以下变量：
-
-```bash
-export STATLAS_PYTHON=/path/to/conda/env/bin/python
-export STATLAS_QUANT=/path/to/conda/env/bin/StatlasQuant
-export STATLAS_COMPILE_DIR=/path/to/VS859_ED_release/tools/NPU/statlas
-```
-
-`run.sh` 会加载 `env.sh`，再调用：
+`run.sh` 会加载仓库根目录的 `env.sh`，再调用：
 
 ```text
 ./run.sh <mode> <operation> [options]
@@ -94,22 +91,71 @@ export STATLAS_COMPILE_DIR=/path/to/VS859_ED_release/tools/NPU/statlas
 | 操作 | 作用 | 是否生成模型 |
 |---|---|---:|
 | `status` | 统计模型、数据、配置和输出文件数 | 否 |
-| `validate` | 检查 `eval.yaml` 存在并统计校准/评估目录条目数 | 否 |
+| `validate` | 检查 VS859 `eval.yaml` 存在并统计校准/评估目录条目数 | 否 |
 | `clean-model` | 使用 Statlas `OnnxConvertTool` 清洗原始 ONNX | 是 |
-| `cut-head` | 裁掉 YOLOv8/11 DFL 解码头 | 是 |
-| `quant` | 按 `quant.yaml` 做 PTQ | 是 |
-| `eval` | 按 `eval.yaml` 评估量化模型 | 否 |
+| `cut-head` | 裁掉 YOLOv5 或 YOLOv8/11 的主机后处理部分 | 是 |
+| `quant` | 按 `configs/vs859/quant.yaml` 做 Statlas PTQ | 是 |
+| `eval` | 默认评估 VS859；`--platform rk3576` 评估 RKNN | 否 |
 | `float-eval` | 用原始 ONNX 做浮点基线评估 | 否 |
 | `compare` | 比较开启/关闭量化时的逐层输出 | 否 |
-| `compile` | 按 `compile.yaml` 生成 VS859 `.mgz` | 是 |
+| `compile` | 默认生成 VS859 `.mgz`；指定平台后生成 RK3576 `.rknn` | 是 |
 | `clean` | 清理指定范围的生成物 | 删除生成物 |
-| `all` | 顺序执行 `quant + eval + float-eval + compile` | 是 |
+| `all` | 顺序执行 `quant + eval + float-eval + VS859 compile` | 是 |
 
 先打印命令、不实际执行：
 
 ```bash
 ./run.sh basketball quant --dry-run
-./run.sh basketball compile --dry-run
+./run.sh basketball compile --platform vs859 --dry-run
+./run.sh basketball compile --platform rk3576 --dry-run
+```
+
+### 2.2 VS859 环境
+
+VS859 的清洗、Statlas PTQ、评估和 MGZ 编译依赖以下变量：
+
+```bash
+cd /home/dragonfly/wj_sdk/quant_folder
+cp env.example.sh env.sh
+vim env.sh
+export STATLAS_PYTHON=/path/to/conda/env/bin/python
+export STATLAS_QUANT=/path/to/conda/env/bin/StatlasQuant
+export STATLAS_COMPILE_DIR=/path/to/VS859_ED_release/tools/NPU/statlas
+```
+
+### 2.3 RK3576 环境
+
+RK3576 转换只要求 `RKNN_PYTHON` 指向能够导入 `rknn.api` 的 Python：
+
+```bash
+export RKNN_PYTHON=/path/to/rknn-toolkit2-env/bin/python
+```
+
+仓库内 Toolkit2 位置为：
+
+```text
+dependencies/rknn-toolkit2-2.3.2/
+```
+
+RKNN 环境使用该目录的 Toolkit2 2.3.2 wheel，并固定 `onnx==1.16.2`；更高版本 ONNX
+删除了 Toolkit2 2.3.2 仍会访问的 `onnx.mapping`。
+
+### 2.4 自动创建两套环境
+
+环境脚本按仓库内相对路径创建相互独立的 Conda 环境，并更新本机 `env.sh`：
+
+```bash
+./setup_conda_envs.sh
+```
+
+默认依次创建 `dependencies/conda-envs/statlas`（Python 3.8）和
+`dependencies/conda-envs/rknn`（Python 3.9），然后把实际解释器路径写入 `env.sh`。
+可先检查命令，或只安装一种环境：
+
+```bash
+./setup_conda_envs.sh --dry-run
+./setup_conda_envs.sh --statlas-only
+./setup_conda_envs.sh --rknn-only
 ```
 
 ## 3. 准备数据
@@ -131,8 +177,8 @@ modes/basketball/datasets/calibration/images/
 - 不得与评估集重复，也应避免来自同一视频的相邻帧跨集合出现；
 - 支持常见的 `.jpg`、`.jpeg`、`.png`、`.bmp`，建议统一使用可完整解码的 RGB JPEG/PNG。
 
-当前 `quant.yaml` 的 `calibrate_num_sampler` 是 `10`。下面是切换到 Basketball 校准目录并将
-采样目标提高到 `100` 的**建议修改示例**，不是当前文件原值：
+当前 Basketball `quant.yaml` 的 `calibrate_num_sampler` 是 `20`。下面是保持当前
+Basketball 校准目录、将采样目标提高到 `100` 的**建议修改示例**，不是当前文件原值：
 
 ```yaml
 dataset:
@@ -145,7 +191,7 @@ dataset:
 
 约束：
 
-- `root` 必须指向实际篮球校准集。当前配置仍指向 soccer，运行前必须修改；
+- `root` 必须指向实际篮球校准集；当前 Basketball 配置已指向上述目录；
 - `calibrate_num_sampler` 必须小于或等于目录中可解码图片数；
 - 数据变化后必须重新执行 `quant -> eval -> compare -> compile`；
 - 少量校准图只能用于打通流程，正式 PTQ 应覆盖足够多的真实部署场景。
@@ -246,7 +292,8 @@ python3 -m json.tool \
 ./run.sh basketball validate
 ```
 
-注意：篮球模式当前没有专用 `tools/dataset.py`，因此 `validate` 只会确认 `eval.yaml` 存在并统计
+注意：篮球模式当前没有专用 `tools/dataset.py`，因此 `validate` 只会确认
+`configs/vs859/eval.yaml` 存在并统计
 校准、评估目录中的条目数。它**不会**检查图片能否解码、COCO ID 是否重复、标注是否越界或
 `file_name` 是否全部存在。正式评估前仍需通过标注工具或单独的 COCO 校验脚本完成深度检查。
 
@@ -273,7 +320,8 @@ _fp32.onnx
 ```
 
 如果没有原始 ONNX，或存在多个不带上述后缀的 ONNX，`clean-model`、`cut-head` 和
-`float-eval` 会拒绝执行。当前工作区的篮球 `model/` 为空，必须先放入模型。
+`float-eval` 会拒绝执行。当前 Basketball 模型目录已经包含一个完整 raw ONNX 和对应的
+head-cut ONNX；重新替换模型时仍须遵守唯一候选规则。
 
 ### 4.2 模型清洗
 
@@ -298,12 +346,13 @@ modes/basketball/model/basketball_yolov8_raw.onnx
 
 注意：
 
-- 清洗不会修改 `quant.yaml`；需要手工把 `model.onnx_model` 指向清洗产物；
+- 清洗不会修改任何平台配置；需要手工把 VS859 `quant.yaml` 或 RK3576 `rknn.yaml` 的
+  `model.onnx_model` 指向清洗产物；
 - `_clean.onnx` 不再被识别为“原始模型”，避免重复清洗；
 - 只有模型来源明确、图结构已被当前 Statlas 工具链验证时，才可以跳过清洗；
 - 清洗后仍应使用 ONNX checker/推理对比确认输入输出名称、shape 和数值行为没有意外变化。
 
-### 4.3 YOLOv8 DFL 检测头裁切
+### 4.3 YOLOv5/v8/v11 检测头裁切
 
 篮球 YOLOv8 检测头包含 DFL Softmax、dist2bbox 和展平后的大网格计算。当前 Statlas 编译器可能
 无法对这些算子完成 tile，因此编译用模型通常需要在 4D 检测分支输出处裁掉解码头：
@@ -311,6 +360,26 @@ modes/basketball/model/basketball_yolov8_raw.onnx
 ```bash
 ./run.sh basketball cut-head
 ```
+
+同一个 `cut-head` 命令也支持 YOLOv5。分发器会识别三尺度 Detect 头，在每个
+`Reshape -> Transpose -> Sigmoid` 分支后裁切，并生成按 stride `8/16/32` 排序的
+三个 NHWC 输出：
+
+```text
+[1, H/8,  W/8,  3*(5+nc)]
+[1, H/16, W/16, 3*(5+nc)]
+[1, H/32, W/32, 3*(5+nc)]
+```
+
+这些张量保留 sigmoid，但不包含 grid、stride、anchor 解码，符合嵌入式
+`YoloV5PostProcessor::process_native_nhwc` 的输入契约。不能直接把完整 YOLOv5
+末端的三个 `Concat` 设为输出，因为它们已经完成坐标解码，C++ 会重复解码。
+
+例如 `demo_v5` 的输出为 `[1,88,160,27]`、`[1,44,80,27]`、
+`[1,22,40,27]`。裁切器只生成模型和 `_spec.yaml`，不会自动修改
+VS859 的 `quant.yaml`、`eval.yaml`、`compile.yaml` 或 RK3576 的 `rknn.yaml`；
+现有 `decode_mode: yolov5` 仍只适用于
+完整单输出模型。
 
 对检测到 DFL 结构的模型，生成：
 
@@ -331,16 +400,9 @@ box 分支 DFL Softmax
 
 重要限制：
 
-- `cut-head` 默认裁切的是 `run.py` 识别到的唯一原始 ONNX，不会自动选择 `_clean.onnx`；
-- 如果必须裁切清洗后的模型，应直接调用辅助脚本并明确输入输出：
-
-```bash
-"${STATLAS_PYTHON}" common/tools/cut_yolov8_head.py \
-  --input_model modes/basketball/model/<model>_clean.onnx \
-  --output_model modes/basketball/model/<model>_clean_headcut_raw.onnx
-```
-
-- `cut-head` 不会修改 `quant.yaml`；要量化裁头模型，必须手工选择该 ONNX；
+- `cut-head` 优先裁切唯一的 `_clean.onnx`；没有清洗模型时，才选择唯一的原始 ONNX；
+- 同时存在多个 `_clean.onnx` 或多个候选原始 ONNX 时会报错，必须先移走无关候选或明确保留本次构建模型；
+- `cut-head` 不会修改任何配置；要量化裁头模型，必须在目标平台配置中手工选择该 ONNX；
 - 如果脚本没有发现匹配的 DFL 结构，会以成功状态结束但不写 head-cut 模型；必须检查输出日志和文件；
 - head-cut 模型输出的是多尺度原始 4D feature maps，不再是最终检测框。
 
@@ -356,7 +418,7 @@ box 分支 DFL Softmax
 编译输出: 能追溯到该基名和输入格式的 .mgz
 ```
 
-三个配置必须形成同一条链：
+VS859 的三个配置必须形成同一条链：
 
 | 阶段 | 配置字段 | 必须指向/匹配 |
 |---|---|---|
@@ -371,27 +433,35 @@ box 分支 DFL Softmax
 | 编译 | `compile.yaml:quantize` | 与 deploy ONNX 同一次生成的 quant param |
 | 编译 | `preprocess.pre_shape/pre_stride` | 与模型输入及 runtime buffer 一致 |
 
-### 当前配置中的已知不一致
+RK3576 使用独立的 `configs/rk3576/rknn.yaml`，至少检查：
 
-当前文件不能直接串行使用：
+| 字段 | 必须指向/匹配 |
+|---|---|
+| `model.onnx_model` | 本次选定的完整或 head-cut ONNX |
+| `target_platform` | `rk3576` |
+| `do_quantization` | 是否执行 RKNN PTQ |
+| `quant.*` | 本次确定的 RKNN dtype、算法、粒度与混合精度策略 |
+| `dataset.root/sample_count` | RKNN 校准图片及数量；仅量化时使用 |
+| `preprocess.mean/std` | 与训练和板端输入一致 |
 
-1. `quant.yaml` 的源模型名包含 `h1024_w3328`，激活为 `int16`；
-2. `eval.yaml` 引用不含 `opset13_fp32_raw_headcut_raw` 的 `h1920_w1920` 产物；
-3. `compile.yaml` 引用含 `opset13_fp32_raw_headcut_raw` 的 `h1920_w1920` 产物；
-4. `quant.yaml` 的校准 root 指向 soccer；
-5. `compare.yaml` 引用另一组 `h1920_w1920..._clean` 产物，代表图片
-   `clip-0_frame-206.jpg` 当前也不在篮球评估目录；
-6. `eval.yaml` 当前是 `yolov8_raw`，而 `compile.yaml` 选择的是 head-cut 产物，两者输出形态不匹配；
-7. 校准集和评估集包含一张内容相同的图片；
-8. `outputs/quant/` 中已有的旧产物不能证明当前 `quant.yaml` 会重新生成同名文件。
+### 当前 Basketball 配置状态
 
-只更新 README，不自动修改这些 YAML。执行者必须先选择本次模型，然后逐项改成同一基名和尺寸。
+当前三个配置的输入尺寸均为 `1024 x 3328`，校准目录也已切回 Basketball，但模型分支仍有区别：
+
+1. `quant.yaml` 量化 `...fp32_raw_headcut_raw.onnx`，activation 为 `int16`、weight 为 `int8`；
+2. `compile.yaml` 使用同基名的 head-cut deploy ONNX 和 quant param，输出到 `compile/vs859/`；
+3. `eval.yaml` 仍使用完整 `...fp32_raw_deploy_model.onnx` 和 `yolov8_raw` 解码；
+4. `outputs/quant/` 仍保留少量旧尺寸产物，文件存在不代表它属于本次构建。
+
+因此 VS859 编译链已经按 head-cut 基名和尺寸对齐，但 `quant -> eval -> compile` 不能直接串行
+代表同一个模型。正式端到端评估前，应为 head-cut 输出补齐对应 decoder 并让 `eval.yaml` 指向
+head-cut 产物，或者将三份配置全部切回完整 raw 分支。每次只能选择其中一条链。
 
 建议先检查所有关键路径：
 
 ```bash
 rg -n "onnx_model|quant_param|^model:|^quantize:|resize|crop|img_size|pre_shape|pre_stride|root:" \
-  modes/basketball/configs/*.yaml
+  modes/basketball/configs/{vs859,rk3576}/*.yaml
 
 ./run.sh basketball quant --dry-run
 ./run.sh basketball compile --dry-run
@@ -399,12 +469,12 @@ rg -n "onnx_model|quant_param|^model:|^quantize:|resize|crop|img_size|pre_shape|
 
 `--dry-run` 只证明入口将调用哪个 YAML，不会替你检查 YAML 内部的模型身份是否一致。
 
-## 6. 模型量化
+## 6. VS859 模型量化
 
 ### 6.1 `quant.yaml` 参数说明
 
-当前文件的采样数是 `10`、校准 root 是 soccer。下面展示的是保留当前 activation `int16` / weight
-`int8` 精度策略、但把数据路径和建议采样目标改为 Basketball 后的**推荐结构**：
+当前文件的采样数是 `20`，校准 root 是 Basketball。下面展示的是保留当前 activation
+`int16` / weight `int8` 精度策略、但把建议采样目标提高到 `100` 后的**推荐结构**：
 
 ```yaml
 model:
@@ -462,10 +532,10 @@ out_dir: modes/basketball/outputs/quant/
 混合位宽，不等同于“只把少数敏感层提升到 16 bit”的逐层混合精度。
 
 `run.py` 的规则是：如果存在
-`modes/basketball/configs/mixed_precision.yaml`，执行 `quant` 时会自动追加：
+`modes/basketball/configs/vs859/mixed_precision.yaml`，执行 `quant` 时会自动追加：
 
 ```text
---qparam_cfg modes/basketball/configs/mixed_precision.yaml
+--qparam_cfg modes/basketball/configs/vs859/mixed_precision.yaml
 ```
 
 当前篮球目录没有该文件。确实需要逐层保护时，可根据 `compare` 结果和工具链支持创建，例如：
@@ -513,7 +583,7 @@ modes/basketball/outputs/quant/<model>_quant_param.yaml
 - observer、dtype、symmetry、per-channel 变化；
 - `mixed_precision.yaml` 变化。
 
-## 7. 模型评估
+## 7. VS859 模型评估
 
 评估的目的不是只得到一个 AP，而是区分“模型本身误差”和“量化新增误差”。浮点与量化评估必须
 使用同一批图片、同一 COCO 标注、同一输入尺寸、同一归一化和同一种输出解码方式。
@@ -569,7 +639,7 @@ modes/basketball/outputs/evaluation/visualizations/
 
 ```bash
 "${STATLAS_PYTHON}" common/evaluation/yolo_coco_metric.py \
-  --config modes/basketball/configs/eval.yaml \
+  --config modes/basketball/configs/vs859/eval.yaml \
   --model modes/basketball/model/<model>_headcut_raw.onnx \
   --num 0 \
   --vis-dir modes/basketball/outputs/evaluation/float_headcut_visualizations
@@ -621,11 +691,14 @@ modes/basketball/outputs/evaluation/compare/REPORT.md
 
 只有量化评估通过后，才应把同一组 deploy ONNX 和 quant param 交给编译阶段。
 
-## 8. 模型编译
+## 8. VS859 平台流程
 
-### 8.1 编译前检查
+VS859 使用 Statlas 工具链。模型先由 `quant.yaml` 完成 PTQ，再由 `compile.yaml` 将成对的
+deploy ONNX 和 quant param 编译为 MGZ。
 
-确认 `modes/basketball/configs/compile.yaml`：
+### 8.1 VS859 编译前检查
+
+确认 `modes/basketball/configs/vs859/compile.yaml`：
 
 1. `model` 是刚通过评估的 deploy ONNX；
 2. `quantize` 是与该 ONNX 同一次 PTQ 生成的 quant param；
@@ -633,27 +706,44 @@ modes/basketball/outputs/evaluation/compare/REPORT.md
 4. `pre_shape` 与 ONNX 输入 shape 一致；
 5. runtime 输入格式、stride、色彩范围与部署代码一致；
 6. mean/std 与 PTQ、评估一致；
-7. 输出 `.mgz` 名称能区分模型版本、尺寸和输入格式。
+7. `output` 位于 `outputs/compile/vs859/`，名称能区分模型版本、尺寸和输入格式。
 
-然后执行：
+### 8.2 VS859 执行命令
+
+VS859 是默认平台，下面两条命令等价：
 
 ```bash
 ./run.sh basketball compile
+./run.sh basketball compile --platform vs859
 ```
 
-`run.py` 会设置编译器 `lib/` 到 `LD_LIBRARY_PATH`，并执行：
+建议先执行：
+
+```bash
+./run.sh basketball compile --platform vs859 --dry-run
+```
+
+`run.py` 会把编译器 `lib/` 加入 `LD_LIBRARY_PATH`，然后执行：
 
 ```text
-${STATLAS_COMPILE_DIR}/StatlasCompile -c modes/basketball/configs/compile.yaml
+${STATLAS_COMPILE_DIR}/StatlasCompile -c modes/basketball/configs/vs859/compile.yaml
 ```
 
-### 8.2 编译参数说明
+批量编译当前全部模式：
+
+```bash
+for mode in basketball demo_v11 demo_v26 demo_v5 demo_v8 soccer; do
+  ./run.sh "$mode" compile --platform vs859
+done
+```
+
+### 8.3 VS859 编译参数说明
 
 | 字段 | 当前值/形式 | 说明 |
 |---|---|---|
 | `model` | deploy ONNX 路径 | 必须是本次评估通过的量化 deploy 模型 |
 | `quantize` | quant param YAML 路径 | 必须与 `model` 成对，不能混用不同 PTQ 产物 |
-| `output` | `outputs/compile/*.mgz` | 最终平台模型输出路径 |
+| `output` | `outputs/compile/vs859/*.mgz` | 旌平台模型输出路径 |
 | `optimze_level` | 当前 `2` | 编译优化等级；字段按工具实际拼写，不能自行改成 `optimize_level` |
 | `target` | 当前 `VS859` | 目标芯片/平台，必须与部署硬件一致 |
 | `mode` | 当前 `0` | 编译器模式选择；含义依当前 StatlasCompile 版本，未经版本文档确认不要修改 |
@@ -694,26 +784,209 @@ ${STATLAS_COMPILE_DIR}/StatlasCompile -c modes/basketball/configs/compile.yaml
 配置中的旧注释如果仍写“RGB->RGB 不涉及 YUV”，不能作为当前 NV12 配置的依据；应以 runtime
 实际产生的 NV12 标准为准。
 
-当前 `pre_shape/pre_stride` 写的是 `[1, 3, 1024, 3328]`，而 `model/quantize` 文件名仍包含
-`h1920_w1920`。这正是必须在编译前解决的尺寸冲突。不要仅因为旧 `.mgz` 已存在就跳过检查。
+当前 Basketball 的 `model`、`quantize`、`pre_shape` 和 `pre_stride` 均为 head-cut
+`h1024_w3328` 链路。修改模型后必须再次检查这四项，不能因为旧 `.mgz` 已存在就跳过检查。
 
-### 8.3 编译产物验收
+### 8.4 VS859 输出与验收
 
 输出位于：
 
 ```text
-modes/basketball/outputs/compile/<model>.mgz
+modes/<mode>/outputs/compile/vs859/<configured-name>.mgz
 ```
 
-在目标板至少验证：
+当前 6 个模式均已成功生成 MGZ。
 
-- `.mgz` 可加载，输入/输出 tensor 数量与预期一致；
+目标板至少验证：
+
+- MGZ 可以加载，输入/输出 tensor 数量、顺序和 dtype 与部署代码一致；
 - NV12 buffer 的宽、高、stride 和色彩范围正确；
-- host 端按 `_headcut_raw_spec.yaml` 对各尺度输出完成 DFL、decode 和 NMS；
-- 同一测试图片上，目标板结果与 PC 量化评估结果在可接受误差内；
+- host 端按 `_headcut_raw_spec.yaml` 完成 DFL、decode 和 NMS；
+- 同一测试图片上，板端结果与 PC Statlas 量化评估结果在可接受误差内；
 - 延迟、内存、core 使用和长时间运行稳定性满足部署要求。
 
-## 9. 状态、清理与重跑
+MGZ 文件成功生成只代表 Statlas 离线编译通过，不代表 VS859 板端输入、后处理、精度或性能
+已经验收。
+
+## 9. RK3576 平台流程
+
+RK3576 使用 RKNN Toolkit2，只读取 `configs/rk3576/rknn.yaml`。它在一次 `build` 中完成
+RKNN 量化与模型转换，不读取 `configs/vs859/` 下的任何 YAML，也不使用 Statlas 生成的
+deploy ONNX 或 quant param。
+
+### 9.1 RK3576 输入与转换规则
+
+参数来源如下：
+
+| RKNN 参数 | 来源 |
+|---|---|
+| 输入 ONNX | `model.onnx_model` |
+| 是否量化 | `do_quantization` |
+| 量化 dtype | `quant.dtype` |
+| 校准算法 | `quant.algorithm` |
+| 量化粒度 | `quant.method` |
+| 混合精度 | `quant.hybrid_level/auto_hybrid` |
+| 校准图片 | `dataset.root/sample_count` |
+| 归一化 | `preprocess.mean/std`，转换器按 RKNN 规则换算 |
+| 编译优化 | `build.optimization_level/float_dtype` |
+| 目标平台 | `target_platform`，并与命令行 `--platform` 交叉检查 |
+| 输出 | `outputs/compile/rk3576/<mode>_rk3576.rknn` |
+
+当前 `rknn.yaml` 量化策略字段：
+
+| 字段 | Toolkit2 2.3.2 支持值/说明 |
+|---|---|
+| `do_quantization` | `true` 执行 PTQ，`false` 生成浮点 RKNN |
+| `quant.dtype` | `w8a8`、`w8a16`、`w16a16i`、`w16a16i_dfp`、`w4a16` |
+| `quant.algorithm` | `normal`、`mmse`、`kl_divergence`、`gdq` |
+| `quant.method` | `layer`、`channel` 或 `group32` 至 `group256` |
+| `quant.hybrid_level` | Toolkit2 混合精度等级；当前为 `0` |
+| `quant.auto_hybrid` | 是否在 `rknn.build` 开启自动混合精度 |
+| `build.optimization_level` | Toolkit2 优化等级；当前为 `3` |
+| `build.float_dtype` | 非量化路径的数据类型；Toolkit2 2.3.2 当前支持 `float16` |
+
+Basketball 当前配置示例：
+
+```yaml
+model:
+  onnx_model: modes/basketball/model/<model>_headcut_raw.onnx
+
+target_platform: rk3576
+do_quantization: true
+
+quant:
+  dtype: w8a8
+  algorithm: normal
+  method: channel
+  hybrid_level: 0
+  auto_hybrid: false
+
+build:
+  optimization_level: 3
+  float_dtype: float16
+
+dataset:
+  root: modes/basketball/datasets/calibration/images
+  sample_count: 20
+
+preprocess:
+  mean: [0.0, 0.0, 0.0]
+  std: [1.0, 1.0, 1.0]
+```
+
+除 YOLO26 外，当前涉及的 YOLOv5/v8/v11 模型都在 `rknn.yaml` 中选择去头 ONNX，并显式设置
+`do_quantization: true`、`dtype: w8a8`、`algorithm: normal` 和 `method: channel`。转换器仍会检查
+模型结构，避免重复裁切。YOLO26 使用原生 NMS-free 单输出 ONNX，并显式设置
+`do_quantization: false` 与 `float_dtype: float16`。
+
+RKNN 转换不会修改用于 Statlas 的源 ONNX。若模型含 `vsdeploy::Silu`，转换器会在模型
+同目录生成 `_rknn.onnx`，仅为 RKNN 展开成标准 `Sigmoid + Mul`。
+
+### 9.2 RK3576 执行命令
+
+单模式转换：
+
+```bash
+./run.sh basketball compile --platform rk3576 --dry-run
+./run.sh basketball compile --platform rk3576
+```
+
+批量转换当前全部模式：
+
+```bash
+for mode in basketball demo_v11 demo_v26 demo_v5 demo_v8 soccer; do
+  ./run.sh "$mode" compile --platform rk3576
+done
+```
+
+`--platform` 对 `compile` 和 `eval` 操作生效。不要先运行 Statlas `quant` 来为 RKNN 准备模型；
+RKNN 路径使用的是 `configs/rk3576/rknn.yaml:model.onnx_model`。
+
+### 9.3 RK3576 模式说明
+
+当前支持以下 6 个模式：
+
+| 模式 | 模型/输入尺寸 | RKNN 输入结构 | RKNN 精度 |
+|---|---|---|---|
+| `basketball` | YOLOv8, 1024 x 3328 | 去头 6 输出 | int8 |
+| `demo_v11` | YOLOv11, 1024 x 3328 | 去头 6 输出 | int8 |
+| `demo_v26` | YOLO26, 1024 x 3328 | 原生 NMS-free 单输出 | float |
+| `demo_v5` | YOLOv5, 704 x 1280 | 去头 3 输出 | int8 |
+| `demo_v8` | YOLOv8, 960 x 960 | 去头 6 输出 | int8 |
+| `soccer` | YOLOv5, 1024 x 3328 | 清洗后去头 3 输出 | int8 |
+
+当前 6 个模式均已成功生成 RKNN。输出目录结构为：
+
+```text
+modes/<mode>/outputs/compile/rk3576/
+├── <mode>_rk3576.rknn
+├── <mode>_rk3576.json
+└── <mode>_rk3576.dataset.txt       # int8 模型生成
+```
+
+### 9.4 RK3576 COCO 评估
+
+各模式的 `configs/rk3576/eval.yaml` 独立描述 RKNN 模型、测试集、输入尺寸、解码方式和输出：
+
+| 字段 | 作用 |
+|---|---|
+| `model` | 已导出的 `.rknn` 路径 |
+| `build_config` | PC 模拟器重建模型时使用的 `rknn.yaml` |
+| `dataset.ann_file/img_dir` | COCO 标注和测试图片目录 |
+| `dataset.input_size/color_order` | RKNN 输入高宽和 RGB/BGR 顺序 |
+| `decode.mode` | `yolov5_headcut`、`yolov8_headcut` 或 `yolov8_raw` |
+| `decode.conf_threshold/iou_threshold` | 置信度阈值和逐类别 NMS 阈值 |
+| `decode.anchors` | YOLOv5 三尺度 anchor，仅 YOLOv5 使用 |
+| `decode.class_map` | 模型类别下标到 COCO category id 的映射 |
+| `output.*` | 指标、预测 JSON 和画框图片的输出位置 |
+
+PC 模拟器评估：
+
+```bash
+./run.sh basketball eval --platform rk3576 --dry-run
+./run.sh basketball eval --platform rk3576
+```
+
+RKNN Toolkit2 的 PC 模拟器不能直接加载已经导出的 `.rknn`。因此该命令会读取
+`build_config`，按同一份 `rknn.yaml` 从 ONNX 和校准集在内存中重新 `build`，再执行推理。
+它适合验证转换配置、解码和指标流程，但不是对 `.rknn` 文件本身逐字节验收。
+
+连接 RK3576 目标板后，直接评估已经导出的 `.rknn`：
+
+```bash
+./run.sh basketball eval --platform rk3576 \
+  --runtime-target rk3576 --device-id <设备ID>
+```
+
+输出位于：
+
+```text
+modes/<mode>/outputs/evaluation/rk3576/
+├── metric_result.csv
+├── metric_result.txt
+├── predictions.json
+└── visualizations/
+```
+
+当前 `basketball`、`demo_v11`、`demo_v26`、`demo_v5` 和 `demo_v8` 复用篮球 COCO
+评估集。仓库中暂时没有足球专用 COCO 标注，因此 `soccer` 的评估配置也临时使用篮球测试集，
+并只映射 `person` 和 `sports ball` 类；该结果只能用于流程联调，不能作为足球模型正式精度结论。
+
+### 9.5 RK3576 输出与验收
+
+目标板至少验证：
+
+- RKNN 可以加载，输入/输出 tensor 数量、顺序、layout 和 dtype 与后处理一致；
+- RKNN runtime 的颜色顺序、resize 和 mean/std 与 `rknn.yaml` 及 ONNX 输入 shape 一致；
+- YOLOv5 三输出或 YOLOv8/11 六输出的 stride 顺序与对应 C++ 后处理一致；
+- YOLO26 packed 单输出按专用后处理契约解析；
+- 同一测试图片上，板端结果与浮点/量化基线在可接受误差内；
+- 延迟、内存和长时间运行稳定性满足部署要求。
+
+RKNN 文件成功生成只代表 Toolkit2 离线转换通过，不代表 RK3576 板端输入、后处理、精度或性能
+已经验收。
+
+## 10. 状态、清理与重跑
 
 查看各阶段文件数：
 
@@ -731,6 +1004,7 @@ modes/basketball/outputs/compile/<model>.mgz
 ```
 
 确认后去掉 `--dry-run`。`clean` 只清理 `outputs/` 对应范围，不删除 `model/`、配置或数据集。
+旧版本遗留在 `outputs/compile/` 根目录的产物不会被平台命令覆盖，也不应作为本次构建结果交付。
 
 不建议在当前配置未对齐时使用：
 
@@ -748,7 +1022,7 @@ quant -> eval -> float-eval -> compile
 完整原始 ONNX，通常需要 `yolov8_raw`。因此 head-cut 构建不要使用 `all`；应分别运行 `quant`、
 `eval`、上文的 head-cut 浮点基线命令和 `compile`。
 
-## 10. 常见问题
+## 11. 常见问题
 
 ### `No raw ONNX found`
 
@@ -780,7 +1054,7 @@ compare 最差层。不要直接用提高大量层精度掩盖错误的数据路
 重点核对 runtime 输入格式、NV12 色彩范围、stride、预处理 mean/std、head-cut 输出顺序和 host
 解码参数。编译成功只证明图可编译，不证明端到端输入输出语义正确。
 
-## 11. 交付检查清单
+## 12. 交付检查清单
 
 1. `model/` 中本次原始 ONNX 身份明确，清洗和 head-cut 产物可追溯。
 2. 校准集与部署分布一致，且与训练/评估集没有泄漏。
@@ -791,11 +1065,13 @@ compare 最差层。不要直接用提高大量层精度掩盖错误的数据路
 7. `eval.yaml`、`compare.yaml`、`compile.yaml` 已改成同一模型基名和输入尺寸。
 8. 浮点 AP、量化 AP、逐类指标、框图和 compare 报告均已检查并记录。
 9. `compile.yaml` 的 NV12 格式、range、shape、stride、mean/std 与 runtime 一致。
-10. `.mgz` 已在 VS859 目标板完成加载、精度、性能和稳定性验证。
+10. `rknn.yaml` 的模型、量化策略、校准集和 mean/std 已确认并记录在 manifest。
+11. `.mgz` 和 `.rknn` 分别位于 `compile/vs859/` 与 `compile/rk3576/`，没有混用旧根目录产物。
+12. `.mgz` 已在 VS859、`.rknn` 已在 RK3576 目标板完成加载、精度、性能和稳定性验证。
 
-## 12. Git 管理约定
+## 13. Git 管理约定
 
 - 提交代码、配置、文档、COCO 标注，以及团队约定需要版本化的数据清单；
-- 原始 ONNX、量化产物、评估结果、可视化、日志和 `.mgz` 通常不提交，可由流程重建；
+- 原始 ONNX、量化产物、评估结果、可视化、日志、`.mgz` 和 `.rknn` 通常不提交，可由流程重建；
 - 提交前检查 YAML 中是否残留仅适用于个人机器的绝对路径；
 - 不要通过提交旧产物来掩盖配置链路不一致，模型身份应能由配置和构建记录追溯。

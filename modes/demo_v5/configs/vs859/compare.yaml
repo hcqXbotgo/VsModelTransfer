@@ -1,0 +1,20 @@
+model:
+  onnx_model: modes/demo_v5/outputs/quant/yolov5n_detect_standingperson_ball_board_ballhoop_704_1280_20250707_deploy_model.onnx
+  quant_param: modes/demo_v5/outputs/quant/yolov5n_detect_standingperson_ball_board_ballhoop_704_1280_20250707_quant_param.yaml
+
+work_mode: Compare
+
+dataset:
+  transform:
+    source: compose
+    args: "[transforms.Resize([704, 1280]), transforms.CenterCrop([704, 1280]), transforms.ToTensor(), transforms.Normalize([0.0, 0.0, 0.0], [1.0, 1.0, 1.0])]"
+
+Compare:
+  input_file: modes/basketball/datasets/evaluation/images/VID_20250324_192214_00_018_019_clip-107_frame-22363.jpg
+  result_file: layer_compare.csv
+  layer_dump: false
+
+analysis_cfg:
+  sim_compare: true
+
+out_dir: modes/demo_v5/outputs/evaluation/compare

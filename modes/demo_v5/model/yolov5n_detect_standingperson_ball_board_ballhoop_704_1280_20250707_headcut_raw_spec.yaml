@@ -1,0 +1,19 @@
+# Auto-generated YOLOv5 host-decode specification.
+source: /home/dragonfly/wj_sdk/quant_folder/modes/demo_v5/model/yolov5n_detect_standingperson_ball_board_ballhoop_704_1280_20250707.onnx
+layout: NHWC
+anchors_per_scale: 3
+num_classes: 4
+properties_per_anchor: 9
+outputs:
+  - name: yolov5_stride8_output
+    stride: 8
+    shape: [1, 88, 160, 27]
+  - name: yolov5_stride16_output
+    stride: 16
+    shape: [1, 44, 80, 27]
+  - name: yolov5_stride32_output
+    stride: 32
+    shape: [1, 22, 40, 27]
+
+# Host must apply: xy=(sigmoid*2-0.5+grid)*stride,
+# wh=(sigmoid*2)^2*anchor, score=objectness*class, then NMS.

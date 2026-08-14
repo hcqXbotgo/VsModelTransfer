@@ -1,0 +1,20 @@
+model:
+  onnx_model: modes/basketball/outputs/quant/yolov8n_detect_sperson_ball_hoop_ballhoop_h1920_w1920_20260720-2_best_clean_deploy_model.onnx
+  quant_param: modes/basketball/outputs/quant/yolov8n_detect_sperson_ball_hoop_ballhoop_h1920_w1920_20260720-2_best_clean_quant_param.yaml
+
+work_mode: Compare
+
+dataset:
+  transform:
+    source: compose
+    args: "[transforms.Resize([1024, 3328]), transforms.CenterCrop([1024, 3328]), transforms.ToTensor(), transforms.Normalize([0.0, 0.0, 0.0], [1.0, 1.0, 1.0])]"
+
+Compare:
+  input_file: modes/basketball/datasets/evaluation/images/clip-0_frame-206.jpg
+  result_file: layer_compare.csv
+  layer_dump: false
+
+analysis_cfg:
+  sim_compare: true
+
+out_dir: modes/basketball/outputs/evaluation/compare

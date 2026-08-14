@@ -1,0 +1,24 @@
+model:
+  onnx_model: modes/demo_v26/model/yolo26n_detect_sperson_ball_hoop_ballhoop_h1024_w3328_20260706_best_opset13_noE2E_fp32.onnx
+
+target_platform: rk3576
+do_quantization: false
+
+quant:
+  dtype: w8a8
+  algorithm: normal
+  method: channel
+  hybrid_level: 0
+  auto_hybrid: false
+
+build:
+  optimization_level: 3
+  float_dtype: float16
+
+dataset:
+  root: modes/basketball/datasets/calibration/images
+  sample_count: 14
+
+preprocess:
+  mean: [0.0, 0.0, 0.0]
+  std: [1.0, 1.0, 1.0]

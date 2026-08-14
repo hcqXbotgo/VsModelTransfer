@@ -18,7 +18,20 @@ Class-index mapping (the correctness-critical part):
 
         python -c "import onnx;print(onnx.load(MODEL).metadata_props)" | grep names
 
-Usage:
+Simple usage:
+    python yolo_to_coco.py /path/to/test
+
+Specify class names explicitly (recommended for formal evaluation):
+    python yolo_to_coco.py /path/to/test \
+        --names person ball hoop ballhoop
+
+For input ``/path/to/test``, this creates ``/path/to/evaluation/images`` and
+``/path/to/evaluation/annotations/instances.json`` next to the input directory.
+The input may contain ``images/`` and ``labels/`` subdirectories, or
+image/label pairs in the same directory. Class names are read from a nearby
+``data.yaml`` when available; otherwise ``class_0``, ``class_1``, ... are used.
+
+Advanced/legacy usage:
     python yolo_to_coco.py \
         --input /path/to/yolo_dir \
         --img-out modes/<mode>/datasets/evaluation/images \
@@ -36,20 +49,30 @@ from pathlib import Path
 from PIL import Image
 
 
+IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.bmp', '.webp')
+
+
 def parse_args():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('--input', required=True, type=Path,
+    ap = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        usage='%(prog)s [-h] [--names NAME [NAME ...]] TEST_DIR')
+    ap.add_argument('dataset', nargs='?', type=Path, metavar='TEST_DIR',
+                    help='Test dataset directory (simple mode)')
+    ap.add_argument('--input', type=Path,
                     help='YOLO dataset dir with <stem>.<ext> + <stem>.txt pairs')
-    ap.add_argument('--img-out', required=True, type=Path,
+    ap.add_argument('--img-out', type=Path,
                     help='Destination dir for images (created if missing)')
-    ap.add_argument('--ann-out', required=True, type=Path,
+    ap.add_argument('--ann-out', type=Path,
                     help='Destination COCO instances.json path (created if missing)')
-    ap.add_argument('--names', required=True, nargs='+',
-                    help='Ordered class names: position i = model class i '
-                         '= COCO category_id i+1. Must match the model names.')
-    ap.add_argument('--ext', default='jpg',
-                    help='Image extension to look for (default: jpg)')
+    ap.add_argument('--names', nargs='+', metavar='NAME',
+                    help='Optional ordered class names, for example: '
+                         '--names person ball hoop ballhoop. Position i = '
+                         'model class i = COCO category_id i+1; the order '
+                         'must match model training. If omitted, names are '
+                         'read from data.yaml or generated as class_N.')
+    ap.add_argument('--ext',
+                    help='Only process this image extension (default: common image formats)')
     ap.add_argument('--no-copy', action='store_true',
                     help='Do not copy images (only write instances.json; '
                          'img-out must already contain the images)')
@@ -58,8 +81,99 @@ def parse_args():
     return ap.parse_args()
 
 
+def _dataset_dirs(input_dir):
+    """Return image and label directories for common YOLO layouts."""
+    images_dir = input_dir / 'images'
+    if images_dir.is_dir():
+        labels_dir = input_dir / 'labels'
+        return images_dir, labels_dir if labels_dir.is_dir() else images_dir
+    return input_dir, input_dir
+
+
+def _find_images(images_dir, extension):
+    if extension:
+        return sorted(images_dir.glob('*.{}'.format(extension.lstrip('.'))))
+    return sorted(path for path in images_dir.iterdir()
+                  if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS)
+
+
+def _names_from_data_yaml(input_dir):
+    candidates = (input_dir / 'data.yaml', input_dir / 'dataset.yaml',
+                  input_dir.parent / 'data.yaml',
+                  input_dir.parent / 'dataset.yaml')
+    for path in candidates:
+        if not path.is_file():
+            continue
+        try:
+            import yaml
+            data = yaml.safe_load(path.read_text(encoding='utf-8')) or {}
+        except (ImportError, OSError, ValueError):
+            continue
+        names = data.get('names')
+        if isinstance(names, list):
+            return [str(name) for name in names]
+        if isinstance(names, dict):
+            try:
+                return [str(names[index]) for index in
+                        sorted(names, key=lambda value: int(value))]
+            except (KeyError, TypeError, ValueError):
+                continue
+    return None
+
+
+def _infer_names(images, labels_dir, configured_names, dataset_dir):
+    if configured_names:
+        return configured_names
+    class_ids = set()
+    for image_path in images:
+        label_path = labels_dir / (image_path.stem + '.txt')
+        if not label_path.is_file():
+            continue
+        for line in label_path.read_text(encoding='utf-8').splitlines():
+            parts = line.split()
+            if parts:
+                try:
+                    class_ids.add(int(parts[0]))
+                except ValueError:
+                    sys.exit('error: invalid class id in {}: {!r}'.format(
+                        label_path, line))
+    if not class_ids:
+        sys.exit('error: cannot infer classes: no labeled objects found')
+    max_class_id = max(class_ids)
+    names = _names_from_data_yaml(dataset_dir)
+    if names is not None:
+        if len(names) <= max_class_id:
+            sys.exit('error: data.yaml has {} names but labels use class id {}'.format(
+                len(names), max_class_id))
+        return names
+    return ['class_{}'.format(index) for index in range(max_class_id + 1)]
+
+
 def main():
     args = parse_args()
+
+    if args.dataset is not None and args.input is not None:
+        sys.exit('error: use either the dataset path or --input, not both')
+    in_dir = args.dataset or args.input
+    if in_dir is None:
+        sys.exit('error: test dataset directory is required')
+    if not in_dir.is_dir():
+        sys.exit('error: input dir not found: {}'.format(in_dir))
+
+    simple_mode = args.dataset is not None
+    if simple_mode:
+        output_root = in_dir.resolve().parent / 'evaluation'
+        args.img_out = args.img_out or output_root / 'images'
+        args.ann_out = args.ann_out or output_root / 'annotations' / 'instances.json'
+    elif args.img_out is None or args.ann_out is None:
+        sys.exit('error: --img-out and --ann-out are required with --input')
+
+    images_dir, labels_dir = _dataset_dirs(in_dir)
+    images = _find_images(images_dir, args.ext)
+    if not images:
+        expected = '*.{}'.format(args.ext.lstrip('.')) if args.ext else 'images'
+        sys.exit('error: no {} found in {}'.format(expected, images_dir))
+    args.names = _infer_names(images, labels_dir, args.names, in_dir)
 
     if len(set(args.names)) != len(args.names):
         sys.exit('error: --names contains duplicates: {}'.format(args.names))
@@ -70,14 +184,6 @@ def main():
         for i, name in enumerate(args.names)
     ]
     name_for_id = {c['id']: c['name'] for c in categories}
-
-    in_dir = args.input
-    if not in_dir.is_dir():
-        sys.exit('error: input dir not found: {}'.format(in_dir))
-
-    images = sorted(in_dir.glob('*.{}'.format(args.ext.lstrip('.'))))
-    if not images:
-        sys.exit('error: no *.{} images found in {}'.format(args.ext, in_dir))
 
     if not args.no_copy:
         args.img_out.mkdir(parents=True, exist_ok=True)
@@ -91,7 +197,7 @@ def main():
     cls_counts = {c['id']: 0 for c in categories}
 
     for img_id, img_path in enumerate(images, start=1):
-        label_path = img_path.with_suffix('.txt')
+        label_path = labels_dir / (img_path.stem + '.txt')
         if not label_path.exists():
             print('  warn: no label for {} (skipped)'.format(img_path.name),
                   file=sys.stderr)

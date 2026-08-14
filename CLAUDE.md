@@ -1,7 +1,8 @@
 # CLAUDE.md — quant_folder
 
-本仓用于将 ONNX 检测模型量化、评估、编译为旌平台（Statlas）模型。支持 `soccer` 和 `demo` 两种
-运动模式，每个模式自包含 model/datasets/configs/outputs。通用 loader 与 metric 放在 `common/`。
+本仓用于将 ONNX 检测模型量化、评估并转换为 VS859（Statlas）或 RK3576（RKNN Toolkit2）模型。
+每个模式自包含 model/datasets/configs/outputs，平台配置分别位于 `configs/vs859/` 和
+`configs/rk3576/`。通用 loader 与 metric 放在 `common/`。
 
 ## 入口
 
@@ -15,8 +16,9 @@
 ./run.sh <mode> eval               # 量化模型 AP（→ outputs/evaluation/metric_result.csv）
 ./run.sh <mode> float-eval         # 原始 ONNX AP 基线（→ outputs/evaluation/float_visualizations/）
 ./run.sh <mode> compare            # 逐层余弦误差（→ outputs/evaluation/compare/）
-./run.sh <mode> compile            # 按 configs/compile.yaml 编译为平台模型
-./run.sh <mode> cut-head           # 显式切检测头（v8/v11；v5 为 no-op，产物写入 model/）
+./run.sh <mode> compile            # 按 configs/vs859/compile.yaml 编译 MGZ
+./run.sh <mode> compile --platform rk3576  # 按 configs/rk3576/rknn.yaml 转换 RKNN
+./run.sh <mode> cut-head           # 显式切检测头（v5 三路 NHWC；v8/v11 六路 DFL，产物写入 model/）
 ./run.sh <mode> all                # quant + eval + float-eval + compile
 ./run.sh <mode> <op> --dry-run     # 只打印命令不执行
 ```
@@ -95,13 +97,13 @@ cd /home/dragonfly/wj_sdk/quant_folder
 ./run.sh demo   compare
 ```
 
-`compare` 的代表图通过 `modes/<mode>/configs/compare.yaml` 的 `Compare.input_file` 指定；
+`compare` 的代表图通过 `modes/<mode>/configs/vs859/compare.yaml` 的 `Compare.input_file` 指定；
 `layer_dump: false` 默认不落盘中间 NPY（3328×1024 单图张量可达数 GB）。
 
 ## 量化关键约束（soccer）
 
 - 检测头坐标与置信度动态范围差距巨大，共用 INT8 scale 会清零置信度 → 必须使用
-  `configs/mixed_precision.yaml` 的检测头 FP16 混合精度配置。
+  `configs/vs859/mixed_precision.yaml` 的检测头 FP16 混合精度配置。
 - 校准、评估必须用相同前处理：RGB、`[0,1]`、`mean=[0,0,0]`、`std=[1,1,1]`、resize/crop 到
   模型输入尺寸（soccer 为 `[1024, 3328]`，demo 为 `640`）。
 - 改动校准图、observer、位宽或模型后必须重跑 `quant → eval → float-eval → compare` 并记录对比。
@@ -113,9 +115,12 @@ YOLOv8/v11 检测头在展平的网格轴上做 DFL（`Softmax`）+ dist2bbox
 （`time step assign init_group_data_secs failed`）。YOLOv5 头是加性解码
 （`Mul`/`Pow`/`Add`），能整模型内联编译。
 
-- `cut-head` 显式生成 `model/<model>_headcut_raw.onnx` 和 decode spec，不修改配置文件。
-- `quant` 只使用 `configs/quant.yaml` 指定的模型；`compile` 只使用
-  `configs/compile.yaml` 指定的模型和 qparam。两者都不会自动切头或替换路径。
+- `cut-head` 自动识别模型族并生成 `model/<model>_headcut_raw.onnx` 和 decode spec，
+  不修改配置文件。YOLOv5 输出按 stride 8/16/32 排序的三路 NHWC sigmoid 张量，
+  供 `YoloV5PostProcessor::process_native_nhwc` 解码；YOLOv8/11 输出六路 DFL 特征图。
+- `quant` 只使用 `configs/vs859/quant.yaml` 指定的模型；默认 `compile` 只使用
+  `configs/vs859/compile.yaml` 指定的模型和 qparam。RK3576 转换只使用
+  `configs/rk3576/rknn.yaml`。这些入口不会互相借用平台配置。
 - 推荐顺序为 `cut-head → quant → eval → compile`。切头模型的 `.mgz` 输出是 6 个原始
   4D 特征图，**DFL+解码+NMS 必须在 host 端做**（reg_max/stride/nc 见 spec）。
 - 详见 `modes/basketball/docs/COMPILE.md`、切头脚本 `common/tools/cut_yolov8_head.py`。

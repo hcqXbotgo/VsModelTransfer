@@ -155,8 +155,12 @@ def cut_head(in_path, out_path):
         g.output.extend([helper.make_tensor_value_info(
             name, onnx.TensorProto.FLOAT, dims)])
 
-    # stale value_info for dropped tensors -> clear and re-infer
+    # Keep type metadata for retained custom/vendor nodes. Generic ONNX shape
+    # inference cannot reconstruct every Statlas deploy tensor type.
+    kept_value_info = [value for value in g.value_info
+                       if value.name in needed]
     del g.value_info[:]
+    g.value_info.extend(kept_value_info)
     m = shape_inference.infer_shapes(m)
     onnx.checker.check_model(m)
     onnx.save(m, out_path)

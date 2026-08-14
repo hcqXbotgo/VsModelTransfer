@@ -1,0 +1,38 @@
+model:
+  onnx_model: modes/demo_v8/outputs/quant/yolo11n_opset13_fp32_deploy_model.onnx
+  quant_param: modes/demo_v8/outputs/quant/yolo11n_opset13_fp32_quant_param.yaml
+
+work_mode: Metric
+
+dataset:
+  eval:
+    type: Custom
+    loader: common/evaluation/coco_loader.py
+    parameters:
+      ann_file: modes/basketball/datasets/evaluation/annotations/instances.json
+      img_dir: modes/basketball/datasets/evaluation/images
+      normalize_mean: [0.0, 0.0, 0.0]
+      normalize_std: [1.0, 1.0, 1.0]
+      resize_size: [960, 960]
+      crop_size: [960, 960]
+      num_samples: 0
+      batch_size: 1
+      num_workers: 4
+
+metric:
+  type: extern_python
+  source: common/evaluation/yolo_coco_metric.py
+  parameters:
+    annfile: modes/basketball/datasets/evaluation/annotations/instances.json
+    img_size: [960, 960]
+    decode_mode: yolov8_headcut
+    conf_threshold: 0.25
+    iou_threshold: 0.7
+    img_dir: modes/basketball/datasets/evaluation/images
+    vis_dir: modes/demo_v8/outputs/evaluation/visualizations
+    vis_num: 16
+    vis_conf_threshold: 0.25
+    vis_max_boxes: 100
+  result_file: metric_result.csv
+
+out_dir: modes/demo_v8/outputs/evaluation

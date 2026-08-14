@@ -8,8 +8,15 @@ from collections import defaultdict
 import numpy as np
 import torch
 
-from statlas_quant.qat_tool.utils.metrics import Metric
-from statlas_quant.qat_tool.utils.generate_module import _get_absolute_path
+try:
+    from statlas_quant.qat_tool.utils.metrics import Metric
+    from statlas_quant.qat_tool.utils.generate_module import _get_absolute_path
+except ImportError:
+    class Metric:
+        """Fallback base so shared decoders work outside Statlas."""
+
+    def _get_absolute_path(path):
+        return os.path.abspath(path)
 
 
 # ── Decoders ──────────────────────────────────────────
@@ -82,6 +89,31 @@ def _decode_yolov8_raw(output, img_h, img_w, img_size):
     return bboxes, scores, cls.long()
 
 
+def _feature_chw(tensor, img_size):
+    """Normalize an RKNN/ONNX feature map to CHW using its stride."""
+    if tensor.dim() == 4:
+        tensor = tensor[0]
+    if tensor.dim() != 3:
+        raise ValueError('feature map must be 3D/4D, got {}'.format(
+            tuple(tensor.shape)))
+    in_h, in_w = img_size
+    valid = []
+    for candidate in (tensor, tensor.permute(2, 0, 1)):
+        _, height, width = candidate.shape
+        if (height > 0 and width > 0 and in_h % height == 0 and
+                in_w % width == 0 and in_h // height == in_w // width and
+                in_h // height in (8, 16, 32)):
+            valid.append(candidate)
+    if not valid:
+        raise ValueError('cannot infer feature layout for {} at input {}'.format(
+            tuple(tensor.shape), img_size))
+    return min(valid, key=lambda item: item.shape[0])
+
+
+def _feature_hwc(tensor, img_size):
+    return _feature_chw(tensor, img_size).permute(1, 2, 0).contiguous()
+
+
 def _decode_yolov8_headcut(outputs, img_h, img_w, img_size):
     """Decode head-cut YOLOv8/v11 raw feature maps on host (deployment path).
 
@@ -98,8 +130,7 @@ def _decode_yolov8_headcut(outputs, img_h, img_w, img_size):
     # group the 6 outputs by (H, W): each scale has a box and a cls map
     feats = {}
     for t in outputs:
-        if t.dim() == 4:
-            t = t[0]  # [C, H, W]
+        t = _feature_chw(t, img_size)
         feats.setdefault((t.shape[1], t.shape[2]), []).append(t)
 
     boxes_all, scores_all, cls_all = [], [], []
@@ -219,6 +250,61 @@ def _decode_yolov8_headcut(outputs, img_h, img_w, img_size):
     return bboxes, scores, cls.long()
 
 
+def _decode_yolov5_headcut(outputs, img_h, img_w, img_size, anchors):
+    """Decode the three sigmoid NHWC branches used by RK YOLOv5 runtime."""
+    if len(anchors) != 3 or any(len(scale) != 6 for scale in anchors):
+        raise ValueError('yolov5_headcut requires three groups of six anchors')
+    in_h, in_w = img_size
+    features = []
+    for tensor in outputs:
+        feature = _feature_hwc(tensor, img_size)
+        stride_h = in_h // feature.shape[0]
+        stride_w = in_w // feature.shape[1]
+        if stride_h != stride_w:
+            raise ValueError('non-square YOLOv5 stride for {}'.format(
+                tuple(feature.shape)))
+        features.append((stride_h, feature))
+
+    boxes_all, scores_all, classes_all = [], [], []
+    for scale_index, (stride, feature) in enumerate(sorted(features)):
+        height, width, channels = feature.shape
+        if channels % 3:
+            raise ValueError('YOLOv5 channels must be divisible by 3: {}'.format(
+                channels))
+        properties = channels // 3
+        num_classes = properties - 5
+        if num_classes <= 0:
+            raise ValueError('YOLOv5 output has no class channels')
+        prediction = feature.reshape(height, width, 3, properties).float()
+        anchor = torch.tensor(
+            anchors[scale_index], dtype=prediction.dtype,
+            device=prediction.device).reshape(1, 1, 3, 2)
+        gy, gx = torch.meshgrid(
+            torch.arange(height, dtype=prediction.dtype,
+                         device=prediction.device),
+            torch.arange(width, dtype=prediction.dtype,
+                         device=prediction.device), indexing='ij')
+        grid = torch.stack((gx, gy), dim=-1).unsqueeze(2)
+        center = (prediction[..., 0:2] * 2.0 - 0.5 + grid) * stride
+        size = (prediction[..., 2:4] * 2.0).square() * anchor
+        top_left = center - size / 2.0
+        boxes_all.append(torch.cat((top_left, size), dim=-1).reshape(-1, 4))
+        class_scores, class_ids = prediction[..., 5:].max(dim=-1)
+        scores_all.append((prediction[..., 4] * class_scores).reshape(-1))
+        classes_all.append(class_ids.reshape(-1))
+
+    bboxes = torch.cat(boxes_all, dim=0)
+    scores = torch.cat(scores_all, dim=0)
+    classes = torch.cat(classes_all, dim=0).long()
+    scale_x = float(img_w) / float(in_w)
+    scale_y = float(img_h) / float(in_h)
+    bboxes[:, 0] *= scale_x
+    bboxes[:, 2] *= scale_x
+    bboxes[:, 1] *= scale_y
+    bboxes[:, 3] *= scale_y
+    return bboxes, scores, classes
+
+
 DECODERS = {
     'yolox': _decode_yolox,
     'yolov5': _decode_yolov5,
@@ -227,6 +313,7 @@ DECODERS = {
     'post_nms': _decode_post_nms,
     'yolov8_raw': _decode_yolov8_raw,
     'yolov8_headcut': _decode_yolov8_headcut,
+    'yolov5_headcut': _decode_yolov5_headcut,
 }
 
 
@@ -254,7 +341,7 @@ class CocoEvalBase:
                  conf_threshold=0.001, iou_threshold=0.65,
                  img_dir=None, vis_dir=None, vis_num=0,
                  vis_conf_threshold=0.25, vis_max_boxes=100,
-                 visualize_only=False):
+                 visualize_only=False, decoder_options=None, class_map=None):
         from pycocotools.coco import COCO
         annfile = _get_absolute_path(annfile)
         self.coco = COCO(annfile)
@@ -273,6 +360,10 @@ class CocoEvalBase:
         self.vis_conf_threshold = float(vis_conf_threshold)
         self.vis_max_boxes = int(vis_max_boxes)
         self.visualize_only = bool(visualize_only)
+        self.decoder_options = decoder_options or {}
+        self.class_map = ({int(key): int(value)
+                           for key, value in class_map.items()}
+                          if class_map else None)
         self.data_list = []
         self.img_ids = set()
         self._tmpfile = None
@@ -283,10 +374,10 @@ class CocoEvalBase:
 
     def process_output(self, output, img_h, img_w, img_id):
         self.img_ids.add(int(img_id))
-        if self.decode_mode == 'yolov8_headcut':
-            # head-cut model: `output` is the 6-output list (3 scales x box,cls)
-            bboxes, scores, cls = _decode_yolov8_headcut(
-                output, img_h, img_w, self.img_size)
+        if self.decode_mode in ('yolov8_headcut', 'yolov5_headcut'):
+            bboxes, scores, cls = self.decode_fn(
+                output, img_h, img_w, self.img_size,
+                **self.decoder_options)
         else:
             if not getattr(self, '_debug_printed', False):
                 with open('/tmp/bball_debug.log', 'w') as f:
@@ -316,6 +407,17 @@ class CocoEvalBase:
 
         # confidence filter
         keep = scores > self.conf_threshold
+        if self.class_map is not None:
+            cls = torch.tensor(
+                [self.class_map.get(int(value), -1) for value in cls],
+                dtype=torch.long, device=cls.device)
+            keep &= cls >= 0
+        else:
+            cls = torch.tensor(
+                [self.class_ids[int(value)]
+                 if 0 <= int(value) < len(self.class_ids) else -1
+                 for value in cls], dtype=torch.long, device=cls.device)
+            keep &= cls >= 0
         if keep.sum() == 0:
             return
         bboxes, scores, cls = bboxes[keep], scores[keep], cls[keep]
@@ -328,7 +430,7 @@ class CocoEvalBase:
         for ind in range(bboxes.shape[0]):
             self.data_list.append({
                 'image_id': int(img_id),
-                'category_id': self.class_ids[int(cls[ind])],
+                'category_id': int(cls[ind]),
                 'bbox': bboxes[ind].numpy().tolist(),
                 'score': scores[ind].numpy().item(),
                 'segmentation': [],
@@ -1069,7 +1171,7 @@ class metric_target(Metric):
 def demo():
     """
     Standalone COCO eval driven by YAML config.
-    Usage: python yolo_coco_metric.py --config modes/demo/configs/eval.yaml [--num 50] [--conf 0.25]
+    Usage: python yolo_coco_metric.py --config modes/demo/configs/vs859/eval.yaml [--num 50] [--conf 0.25]
     """
     import argparse, torch, yaml
     from torchvision import transforms

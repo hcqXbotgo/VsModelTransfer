@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parent
 MODES_ROOT = ROOT / 'modes'
 DEFAULT_QUANT = Path('StatlasQuant')
 DEFAULT_PYTHON = Path('python3')
+DEFAULT_RKNN_PYTHON = Path('python3')
 DEFAULT_COMPILER_ROOT = (
     ROOT.parent / 'VS859' / 'VS859_ED_release' / 'tools' / 'NPU' / 'statlas')
 
@@ -50,13 +51,18 @@ def show_command(command):
 def run_command(command, dry_run=False, env=None):
     show_command(command)
     if not dry_run:
-        subprocess.run([str(item) for item in command], cwd=str(ROOT),
-                       env=env, check=True)
+        try:
+            subprocess.run([str(item) for item in command], cwd=str(ROOT),
+                           env=env, check=True)
+        except subprocess.CalledProcessError as error:
+            raise SystemExit('command failed with exit code {}: {}'.format(
+                error.returncode, command[0]))
 
 
-def config(mode, name):
-    return require(MODES_ROOT / mode / 'configs' / '{}.yaml'.format(name),
-                   '{} {} config'.format(mode, name))
+def config(mode, name, platform='vs859'):
+    return require(
+        MODES_ROOT / mode / 'configs' / platform / '{}.yaml'.format(name),
+        '{} {} {} config'.format(mode, platform, name))
 
 
 def quant_command(mode):
@@ -64,7 +70,8 @@ def quant_command(mode):
     quant = require(executable('STATLAS_QUANT', DEFAULT_QUANT, 'StatlasQuant'),
                     'StatlasQuant')
     cmd = [quant, '--quant_cfg', config(mode, 'quant')]
-    mp_path = MODES_ROOT / mode / 'configs' / 'mixed_precision.yaml'
+    mp_path = (MODES_ROOT / mode / 'configs' / 'vs859' /
+               'mixed_precision.yaml')
     if mp_path.exists():
         cmd += ['--qparam_cfg', mp_path]
     return cmd
@@ -145,6 +152,34 @@ def raw_model_path(mode):
     return candidates[0]
 
 
+def cut_head_input_model(mode):
+    """Select one source ONNX, preferring a unique cleaned model."""
+    model_dir = MODES_ROOT / mode / 'model'
+    clean = sorted(model_dir.glob('*_clean.onnx'))
+    if len(clean) == 1:
+        return clean[0]
+    if len(clean) > 1:
+        names = ', '.join(path.name for path in clean)
+        raise SystemExit('Multiple cleaned ONNX models under {}: {}'.format(
+            model_dir, names))
+    try:
+        return raw_model_path(mode)
+    except SystemExit as raw_error:
+        generated = ('_headcut_raw.onnx', '_calibrated_model.onnx',
+                     '_deploy_model.onnx', '_simplified.onnx')
+        candidates = sorted(
+            path for path in model_dir.glob('*.onnx')
+            if not any(path.name.endswith(suffix) for suffix in generated)
+            and not path.name.startswith(('_', '.')))
+        if len(candidates) == 1:
+            return candidates[0]
+        if not candidates:
+            raise raw_error
+        names = ', '.join(path.name for path in candidates)
+        raise SystemExit('Multiple source ONNX models under {}: {}'.format(
+            model_dir, names))
+
+
 def clean_model_command(mode):
     """Build OnnxConvertTool command to clean the raw ONNX.
 
@@ -169,23 +204,21 @@ def clean_model(mode, dry_run):
 
 
 def cut_head_command(mode, input_path=None, output_path=None):
-    """Build the head-cut command for the original ONNX.
+    """Build the head-cut command for a supported YOLO ONNX.
 
-    Cuts the DFL decode head off the original model, producing a headless
-    ONNX (raw 4D feature maps) that is used as PTQ input. Pass
-    input_path/output_path to cut an arbitrary ONNX.
-
-    No-op for non-DFL heads (YOLOv5): the script detects the 4D->3D DFL
-    reshape pattern and writes nothing, exiting 0.
+    YOLOv5 becomes three NHWC sigmoid outputs for the embedded C++ decoder.
+    YOLOv8/11 becomes raw 4D DFL feature maps. Pass input_path/output_path
+    to cut an arbitrary ONNX.
     """
     python = require(executable('STATLAS_PYTHON', DEFAULT_PYTHON, 'python3'),
                      'Python')
-    script = require(ROOT / 'common' / 'tools' / 'cut_yolov8_head.py',
-                     'cut_yolov8_head helper script')
+    script = require(ROOT / 'common' / 'tools' / 'cut_yolo_head.py',
+                     'YOLO head-cut dispatcher')
     if input_path is None:
-        input_path = raw_model_path(mode)
+        input_path = cut_head_input_model(mode)
     if output_path is None:
-        output_path = headcut_raw_model(mode)
+        output_path = input_path.with_name(
+            input_path.stem + '_headcut_raw.onnx')
     return [python, script, '--input_model', input_path,
             '--output_model', output_path], input_path, output_path
 
@@ -248,11 +281,62 @@ def compile_command(mode, cfg=None):
 def run_compile(mode, dry_run):
     """Compile exactly the model and qparam selected by compile.yaml."""
     command, compiler_root = compile_command(mode, compile_yaml(mode))
+    output_dir = MODES_ROOT / mode / 'outputs' / 'compile' / 'vs859'
+    if not dry_run:
+        output_dir.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     old_path = env.get('LD_LIBRARY_PATH', '')
     env['LD_LIBRARY_PATH'] = '{}{}'.format(
         compiler_root / 'lib', ':' + old_path if old_path else '')
     run_command(command, dry_run, env=env)
+
+
+def rknn_compile_command(mode, platform):
+    """Build the RKNN Toolkit2 conversion command for a mode."""
+    python = executable('RKNN_PYTHON', DEFAULT_RKNN_PYTHON, 'python3')
+    if not os.environ.get('RKNN_PYTHON'):
+        python = require(python, 'RKNN Python')
+    script = require(ROOT / 'common' / 'tools' / 'convert_rknn.py',
+                     'RKNN conversion helper')
+    output = (MODES_ROOT / mode / 'outputs' / 'compile' / platform /
+              '{}_{}.rknn'.format(mode, platform))
+    return ([python, script, '--config', config(mode, 'rknn', platform),
+             '--platform', platform, '--output', output,
+             '--workspace', ROOT], output)
+
+
+def run_platform_compile(mode, platform, dry_run):
+    if platform == 'vs859':
+        run_compile(mode, dry_run)
+        return
+    command, output = rknn_compile_command(mode, platform)
+    print('rknn:    {}'.format(output))
+    run_command(command, dry_run)
+
+
+def rknn_eval_command(mode, runtime_target=None, device_id=None):
+    """Build the RKNN Toolkit2 COCO evaluation command for a mode."""
+    python = executable('RKNN_PYTHON', DEFAULT_RKNN_PYTHON, 'python3')
+    if not os.environ.get('RKNN_PYTHON'):
+        python = require(python, 'RKNN Python')
+    evaluator = require(
+        ROOT / 'common' / 'evaluation' / 'rknn_coco_eval.py',
+        'RKNN COCO evaluator')
+    command = [python, evaluator, '--config',
+               config(mode, 'eval', 'rk3576'), '--workspace', ROOT]
+    if runtime_target:
+        command += ['--target', runtime_target]
+    if device_id:
+        command += ['--device-id', device_id]
+    return command
+
+
+def run_platform_eval(mode, platform, dry_run,
+                      runtime_target=None, device_id=None):
+    if platform == 'vs859':
+        run_command(eval_command(mode, 'eval', eval_yaml(mode)), dry_run)
+        return
+    run_command(rknn_eval_command(mode, runtime_target, device_id), dry_run)
 
 
 def run_all(mode, dry_run):
@@ -365,6 +449,12 @@ def main():
                  'validate', 'status', 'all', 'clean', 'clean-model'))
     parser.add_argument('--list', action='store_true', help='List available modes')
     parser.add_argument('--dry-run', action='store_true', help='Print only')
+    parser.add_argument('--platform', default='vs859',
+                        choices=('vs859', 'rk3576'),
+                        help='eval/compile target platform')
+    parser.add_argument('--runtime-target', choices=('rk3576',),
+                        help='RKNN eval target; omit for PC simulator')
+    parser.add_argument('--device-id', help='RKNN eval device id')
     parser.add_argument('--scope', default='quant',
                         choices=('quant', 'eval', 'compile', 'all'),
                         help='clean scope (only used by clean operation)')
@@ -379,15 +469,15 @@ def main():
     if args.operation == 'quant':
         run_quant(args.mode, args.dry_run)
     elif args.operation == 'eval':
-        run_command(eval_command(args.mode, 'eval', eval_yaml(args.mode)),
-                    args.dry_run)
+        run_platform_eval(args.mode, args.platform, args.dry_run,
+                          args.runtime_target, args.device_id)
     elif args.operation == 'float-eval':
         run_command(float_eval_command(args.mode), args.dry_run)
     elif args.operation == 'compare':
         for command in compare_commands(args.mode):
             run_command(command, args.dry_run)
     elif args.operation == 'compile':
-        run_compile(args.mode, args.dry_run)
+        run_platform_compile(args.mode, args.platform, args.dry_run)
     elif args.operation == 'cut-head':
         cut_head(args.mode, args.dry_run)
     elif args.operation == 'validate':

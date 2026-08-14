@@ -1,0 +1,32 @@
+model: modes/demo_v5/outputs/quant/yolov5n_detect_standingperson_ball_board_ballhoop_704_1280_20250707_headcut_raw_deploy_model.onnx
+quantize: modes/demo_v5/outputs/quant/yolov5n_detect_standingperson_ball_board_ballhoop_704_1280_20250707_headcut_raw_quant_param.yaml
+output: modes/demo_v5/outputs/compile/vs859/yolov5n_basketball_704_1280_int8_core0.mgz
+optimze_level: 2
+target: VS859
+mode: 0
+cluster_id: 0
+core_num: 1
+preprocess_en: 1
+preprocess:
+  model_input_type: 1  # RGB
+  pre_input_type: 0    # RGB packed
+  pre_color_range: 0
+  pre_shape:
+    - 1
+    - 3
+    - 704
+    - 1280
+  pre_stride:
+    - 1
+    - 3
+    - 704
+    - 1280
+  mean:
+    - 0.0
+    - 0.0
+    - 0.0
+  std:
+    - 1.0
+    - 1.0
+    - 1.0
+output_tensor_cast: 1

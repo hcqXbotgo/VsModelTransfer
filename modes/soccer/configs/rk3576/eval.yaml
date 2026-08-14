@@ -1,0 +1,36 @@
+model: modes/soccer/outputs/compile/rk3576/soccer_rk3576.rknn
+build_config: modes/soccer/configs/rk3576/rknn.yaml
+
+runtime:
+  target: null
+  device_id: null
+  verbose: false
+  perf_debug: false
+  eval_mem: false
+
+dataset:
+  ann_file: modes/basketball/datasets/evaluation/annotations/instances.json
+  img_dir: modes/basketball/datasets/evaluation/images
+  input_size: [1024, 3328]
+  color_order: RGB
+  num_samples: 0
+
+decode:
+  mode: yolov5_headcut
+  conf_threshold: 0.001
+  iou_threshold: 0.3
+  anchors:
+    - [10, 13, 16, 30, 33, 23]
+    - [30, 61, 62, 45, 59, 119]
+    - [116, 90, 156, 198, 373, 326]
+  # This model exposes 80 COCO classes; only person and sports ball are
+  # comparable with the currently available Basketball annotations.
+  class_map: {0: 1, 32: 2}
+
+output:
+  result_file: modes/soccer/outputs/evaluation/rk3576/metric_result.csv
+  predictions_file: modes/soccer/outputs/evaluation/rk3576/predictions.json
+  vis_dir: modes/soccer/outputs/evaluation/rk3576/visualizations
+  vis_num: 20
+  vis_conf_threshold: 0.25
+  vis_max_boxes: 100

@@ -13,9 +13,10 @@ venv/
 env.sh
 *.log
 
-# Models and compiler binaries are kept locally, not in regular Git.
-*.onnx
+# compiler binaries are kept locally, not in regular Git.
 *.mgz
+*.rknn
+*.dataset.txt
 
 # Downloaded archives
 *.zip

@@ -1,0 +1,30 @@
+model: modes/basketball/outputs/compile/rk3576/basketball_rk3576.rknn
+build_config: modes/basketball/configs/rk3576/rknn.yaml
+
+runtime:
+  target: null
+  device_id: null
+  verbose: false
+  perf_debug: false
+  eval_mem: false
+
+dataset:
+  ann_file: modes/basketball/datasets/evaluation/annotations/instances.json
+  img_dir: modes/basketball/datasets/evaluation/images
+  input_size: [1024, 3328]
+  color_order: RGB
+  num_samples: 0
+
+decode:
+  mode: yolov8_headcut
+  conf_threshold: 0.25
+  iou_threshold: 0.7
+  class_map: {0: 1, 1: 2, 2: 3, 3: 4}
+
+output:
+  result_file: modes/basketball/outputs/evaluation/rk3576/metric_result.csv
+  predictions_file: modes/basketball/outputs/evaluation/rk3576/predictions.json
+  vis_dir: modes/basketball/outputs/evaluation/rk3576/visualizations
+  vis_num: 20
+  vis_conf_threshold: 0.25
+  vis_max_boxes: 100
