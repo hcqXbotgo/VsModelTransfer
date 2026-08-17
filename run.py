@@ -314,6 +314,18 @@ def run_platform_compile(mode, platform, dry_run):
     run_command(command, dry_run)
 
 
+def run_platform_quant(mode, platform, dry_run):
+    """Run PTQ for the selected platform.
+
+    RKNN Toolkit2 performs quantization and RKNN generation in one build call,
+    so its quant operation intentionally shares the conversion path.
+    """
+    if platform == 'vs859':
+        run_quant(mode, dry_run)
+        return
+    run_platform_compile(mode, platform, dry_run)
+
+
 def rknn_eval_command(mode, runtime_target=None, device_id=None):
     """Build the RKNN Toolkit2 COCO evaluation command for a mode."""
     python = executable('RKNN_PYTHON', DEFAULT_RKNN_PYTHON, 'python3')
@@ -337,6 +349,38 @@ def run_platform_eval(mode, platform, dry_run,
         run_command(eval_command(mode, 'eval', eval_yaml(mode)), dry_run)
         return
     run_command(rknn_eval_command(mode, runtime_target, device_id), dry_run)
+
+
+def rknn_compare_command(mode, runtime_target=None, device_id=None,
+                         analysis_input=None):
+    """Build the RKNN Toolkit2 layer accuracy-analysis command."""
+    python = executable('RKNN_PYTHON', DEFAULT_RKNN_PYTHON, 'python3')
+    if not os.environ.get('RKNN_PYTHON'):
+        python = require(python, 'RKNN Python')
+    analyzer = require(
+        ROOT / 'common' / 'evaluation' / 'rknn_accuracy_analysis.py',
+        'RKNN accuracy analyzer')
+    output = (MODES_ROOT / mode / 'outputs' / 'evaluation' / 'rk3576' /
+              'accuracy_analysis')
+    command = [python, analyzer, '--config', config(mode, 'rknn', 'rk3576'),
+               '--workspace', ROOT, '--output-dir', output]
+    if analysis_input:
+        command += ['--input', analysis_input]
+    if runtime_target:
+        command += ['--target', runtime_target]
+    if device_id:
+        command += ['--device-id', device_id]
+    return command
+
+
+def run_platform_compare(mode, platform, dry_run, runtime_target=None,
+                         device_id=None, analysis_input=None):
+    if platform == 'vs859':
+        for command in compare_commands(mode):
+            run_command(command, dry_run)
+        return
+    run_command(rknn_compare_command(
+        mode, runtime_target, device_id, analysis_input), dry_run)
 
 
 def run_all(mode, dry_run):
@@ -451,10 +495,12 @@ def main():
     parser.add_argument('--dry-run', action='store_true', help='Print only')
     parser.add_argument('--platform', default='vs859',
                         choices=('vs859', 'rk3576'),
-                        help='eval/compile target platform')
+                        help='quant/eval/compare/compile target platform')
     parser.add_argument('--runtime-target', choices=('rk3576',),
-                        help='RKNN eval target; omit for PC simulator')
-    parser.add_argument('--device-id', help='RKNN eval device id')
+                        help='RKNN eval/compare target; omit for PC simulator')
+    parser.add_argument('--device-id', help='RKNN eval/compare device id')
+    parser.add_argument('--analysis-input', type=Path,
+                        help='RKNN compare input; default: first calibration image')
     parser.add_argument('--scope', default='quant',
                         choices=('quant', 'eval', 'compile', 'all'),
                         help='clean scope (only used by clean operation)')
@@ -467,15 +513,16 @@ def main():
         parser.error('mode and operation are required (or use --list)')
 
     if args.operation == 'quant':
-        run_quant(args.mode, args.dry_run)
+        run_platform_quant(args.mode, args.platform, args.dry_run)
     elif args.operation == 'eval':
         run_platform_eval(args.mode, args.platform, args.dry_run,
                           args.runtime_target, args.device_id)
     elif args.operation == 'float-eval':
         run_command(float_eval_command(args.mode), args.dry_run)
     elif args.operation == 'compare':
-        for command in compare_commands(args.mode):
-            run_command(command, args.dry_run)
+        run_platform_compare(args.mode, args.platform, args.dry_run,
+                             args.runtime_target, args.device_id,
+                             args.analysis_input)
     elif args.operation == 'compile':
         run_platform_compile(args.mode, args.platform, args.dry_run)
     elif args.operation == 'cut-head':

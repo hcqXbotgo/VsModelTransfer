@@ -94,10 +94,10 @@ quant_folder/
 | `validate` | 检查 VS859 `eval.yaml` 存在并统计校准/评估目录条目数 | 否 |
 | `clean-model` | 使用 Statlas `OnnxConvertTool` 清洗原始 ONNX | 是 |
 | `cut-head` | 裁掉 YOLOv5 或 YOLOv8/11 的主机后处理部分 | 是 |
-| `quant` | 按 `configs/vs859/quant.yaml` 做 Statlas PTQ | 是 |
+| `quant` | 默认做 VS859 PTQ；`--platform rk3576` 量化并生成 RKNN | 是 |
 | `eval` | 默认评估 VS859；`--platform rk3576` 评估 RKNN | 否 |
 | `float-eval` | 用原始 ONNX 做浮点基线评估 | 否 |
-| `compare` | 比较开启/关闭量化时的逐层输出 | 否 |
+| `compare` | 默认比较 VS859 逐层输出；`--platform rk3576` 运行 RKNN 逐层误差分析 | 否 |
 | `compile` | 默认生成 VS859 `.mgz`；指定平台后生成 RK3576 `.rknn` | 是 |
 | `clean` | 清理指定范围的生成物 | 删除生成物 |
 | `all` | 顺序执行 `quant + eval + float-eval + VS859 compile` | 是 |
@@ -884,7 +884,15 @@ RKNN 转换不会修改用于 Statlas 的源 ONNX。若模型含 `vsdeploy::Silu
 
 ### 9.2 RK3576 执行命令
 
-单模式转换：
+单模式量化并生成 RKNN：
+
+```bash
+./run.sh basketball quant --platform rk3576 --dry-run
+./run.sh basketball quant --platform rk3576
+```
+
+RKNN Toolkit2 在一次 `build` 中同时完成量化和模型生成，因此下面的 `compile` 写法与上述
+`quant` 写法执行同一条 RKNN 转换流程，保留用于统一两平台的编译命令：
 
 ```bash
 ./run.sh basketball compile --platform rk3576 --dry-run
@@ -899,7 +907,7 @@ for mode in basketball demo_v11 demo_v26 demo_v5 demo_v8 soccer; do
 done
 ```
 
-`--platform` 对 `compile` 和 `eval` 操作生效。不要先运行 Statlas `quant` 来为 RKNN 准备模型；
+`--platform` 对 `quant`、`eval`、`compare` 和 `compile` 操作生效。不要先运行 Statlas `quant` 来为 RKNN 准备模型；
 RKNN 路径使用的是 `configs/rk3576/rknn.yaml:model.onnx_model`。
 
 ### 9.3 RK3576 模式说明
@@ -972,7 +980,47 @@ modes/<mode>/outputs/evaluation/rk3576/
 评估集。仓库中暂时没有足球专用 COCO 标注，因此 `soccer` 的评估配置也临时使用篮球测试集，
 并只映射 `person` 和 `sports ball` 类；该结果只能用于流程联调，不能作为足球模型正式精度结论。
 
-### 9.5 RK3576 输出与验收
+### 9.5 RK3576 逐层量化误差
+
+PC 模拟器分析：
+
+```bash
+./run.sh basketball compare --platform rk3576 --dry-run
+./run.sh basketball compare --platform rk3576
+```
+
+默认使用 `rknn.yaml:dataset.root` 按文件名排序后的第一张校准图片。也可以显式指定一张有代表性的
+图片或 NPY 输入：
+
+```bash
+./run.sh basketball compare --platform rk3576 \
+  --analysis-input /path/to/representative.jpg
+```
+
+连接 RK3576 后分析 NPU 各层实际输出：
+
+```bash
+./run.sh basketball compare --platform rk3576 \
+  --runtime-target rk3576 --device-id <设备ID> \
+  --analysis-input /path/to/representative.jpg
+```
+
+该操作按 `rknn.yaml` 从 ONNX 重新 build，以便 Toolkit2 同时取得浮点和量化中间输出；它不会
+导出或覆盖 `outputs/compile/rk3576/*.rknn`。结果按算法和运行目标隔离：
+
+```text
+modes/<mode>/outputs/evaluation/rk3576/accuracy_analysis/
+└── <normal|mmse|kl_divergence|gdq>/
+    ├── simulator/
+    └── rk3576/
+```
+
+Toolkit2 会在对应目录生成逐层快照和量化误差结果，本项目另写入 `analysis.json` 记录模型、配置、
+代表图片、算法和目标设备。逐层张量可能占用较多磁盘空间；分析完成后可用
+`./run.sh <mode> clean --scope eval` 清理。`do_quantization: false` 的浮点 RKNN 没有量化误差，
+该命令会直接停止。
+
+### 9.6 RK3576 输出与验收
 
 目标板至少验证：
 
