@@ -7,11 +7,11 @@ quant:
   activation:
     observer: MinMaxObserver
     dtype: int8
-    symmetry: True
+    symmetry: False
   weight:
     observer: MinMaxObserver
     dtype: int8
-    symmetry: True
+    symmetry: False
     per_channel: True
 
 dataset:
