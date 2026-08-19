@@ -1,5 +1,5 @@
 model:
-  onnx_model: modes/demo_v26/model/yolo26n_detect_sperson_ball_hoop_ballhoop_h1024_w3328_20260706_best_opset13_noE2E_fp32.onnx
+  onnx_model: modes/demo_v26/model/yolo26n_detect_sperson_ball_hoop_ballhoop_h1024_w3328_20260706_best_opset13_noE2E_fp32_headcut_raw.onnx
 
 work_mode: PTQ
 
@@ -7,17 +7,17 @@ quant:
   activation:
     observer: MinMaxObserver
     dtype: int8
-    symmetry: True
+    symmetry: False
   weight:
     observer: MinMaxObserver
     dtype: int8
-    symmetry: True
+    symmetry: False
     per_channel: True
 
 dataset:
   calibrate:
     root: modes/basketball/datasets/calibration/images
-    calibrate_num_sampler: 14
+    calibrate_num_sampler: 20
     batch_size: 1
     num_worker: 4
   transform:

@@ -1,6 +1,6 @@
 model:
-  onnx_model: modes/demo_v26/outputs/quant/yolo26n_opset13_fp32_clean_deploy_model.onnx
-  quant_param: modes/demo_v26/outputs/quant/yolo26n_opset13_fp32_clean_quant_param.yaml
+  onnx_model: modes/demo_v26/outputs/quant/yolo26n_detect_sperson_ball_hoop_ballhoop_h1024_w3328_20260706_best_opset13_noE2E_fp32_headcut_raw_deploy_model.onnx
+  quant_param: modes/demo_v26/outputs/quant/yolo26n_detect_sperson_ball_hoop_ballhoop_h1024_w3328_20260706_best_opset13_noE2E_fp32_headcut_raw_quant_param.yaml
 
 work_mode: Metric
 
@@ -9,8 +9,8 @@ dataset:
     type: Custom
     loader: common/evaluation/coco_loader.py
     parameters:
-      ann_file: modes/soccer/datasets/evaluation/annotations/instances.json
-      img_dir: modes/soccer/datasets/evaluation/images
+      ann_file: modes/basketball/datasets/evaluation/annotations/instances.json
+      img_dir: modes/basketball/datasets/evaluation/images
       normalize_mean: [0.0, 0.0, 0.0]
       normalize_std: [1.0, 1.0, 1.0]
       resize_size: [1024, 3328]
@@ -23,16 +23,17 @@ metric:
   type: extern_python
   source: common/evaluation/yolo_coco_metric.py
   parameters:
-    annfile: modes/soccer/datasets/evaluation/annotations/instances.json
+    annfile: modes/basketball/datasets/evaluation/annotations/instances.json
     img_size: [1024, 3328]
-    decode_mode: post_nms
+    decode_mode: yolo26_headcut
     conf_threshold: 0.001
     iou_threshold: 0.65
-    img_dir: modes/soccer/datasets/evaluation/images
+    img_dir: modes/basketball/datasets/evaluation/images
     vis_dir: modes/demo_v26/outputs/evaluation/visualizations
     vis_num: 16
     vis_conf_threshold: 0.25
     vis_max_boxes: 100
+    pr_curve_file: modes/demo_v26/outputs/evaluation/pr_curve.svg
   result_file: metric_result.csv
 
 out_dir: modes/demo_v26/outputs/evaluation

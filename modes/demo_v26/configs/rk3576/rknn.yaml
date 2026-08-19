@@ -1,8 +1,8 @@
 model:
-  onnx_model: modes/demo_v26/model/yolo26n_detect_sperson_ball_hoop_ballhoop_h1024_w3328_20260706_best_opset13_noE2E_fp32.onnx
+  onnx_model: modes/demo_v26/model/yolo26n_detect_sperson_ball_hoop_ballhoop_h1024_w3328_20260706_best_opset13_noE2E_fp32_headcut_raw.onnx
 
 target_platform: rk3576
-do_quantization: false
+do_quantization: true
 
 quant:
   dtype: w8a8

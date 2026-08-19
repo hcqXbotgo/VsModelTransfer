@@ -47,7 +47,8 @@ def write_dataset(config, output_path, workspace):
 
 def should_quantize(head_type):
     """Packed native outputs stay floating for the embedded C++ contract."""
-    return head_type in ('yolov5_headcut', 'yolov8_headcut')
+    return head_type in ('yolov5_headcut', 'yolov8_headcut',
+                         'yolo26_headcut')
 
 
 def conversion_options(config, platform, head_type):
@@ -109,6 +110,9 @@ def classify_outputs(model):
             all(shape[-1] % 3 == 0 for shape in shapes)):
         return 'yolov5_headcut'
     if len(shapes) == 6 and all(len(shape) == 4 for shape in shapes):
+        if (all(shapes[index][1] == 4 for index in (0, 2, 4)) and
+                len({shapes[index][1] for index in (1, 3, 5)}) == 1):
+            return 'yolo26_headcut'
         return 'yolov8_headcut'
     if len(shapes) == 1 and len(shapes[0]) == 3:
         return 'native'
@@ -159,6 +163,7 @@ def prepare_onnx(input_path):
     from onnx import shape_inference
     import cut_yolov5_head
     import cut_yolov8_head
+    import cut_yolo26_head
 
     model = shape_inference.infer_shapes(onnx.load(str(input_path)))
     existing_type = classify_outputs(model)
@@ -180,6 +185,14 @@ def prepare_onnx(input_path):
                 raise SystemExit('Failed to cut YOLOv8/11 head: {}'.format(
                     input_path))
         return output, 'yolov8_headcut'
+
+    if cut_yolo26_head.find_cut_points(model):
+        output = input_path.with_name(input_path.stem + '_headcut_raw.onnx')
+        if not output.is_file():
+            if not cut_yolo26_head.cut_head(input_path, output):
+                raise SystemExit('Failed to cut YOLO26 head: {}'.format(
+                    input_path))
+        return output, 'yolo26_headcut'
 
     return input_path, classify_outputs(model)
 

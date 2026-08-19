@@ -16,7 +16,7 @@ dataset:
   num_samples: 0
 
 decode:
-  mode: yolov8_raw
+  mode: yolo26_headcut
   conf_threshold: 0.001
   iou_threshold: 0.65
   class_map: {0: 1, 1: 2, 2: 3, 3: 4}
@@ -28,3 +28,4 @@ output:
   vis_num: 16
   vis_conf_threshold: 0.25
   vis_max_boxes: 100
+  pr_curve_file: modes/demo_v26/outputs/evaluation/rk3576/pr_curve.svg

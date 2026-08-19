@@ -28,3 +28,8 @@ output:
   vis_num: 20
   vis_conf_threshold: 0.25
   vis_max_boxes: 100
+  # Run `./run.sh basketball float-eval` first to create the baseline JSON.
+  pr_curve_file: modes/basketball/outputs/evaluation/rk3576/pr_curve.svg
+  baseline_predictions_file: modes/basketball/outputs/evaluation/pre_quant_predictions.json
+  # Optional board predictions; missing file is ignored.
+  board_predictions_file: modes/basketball/outputs/evaluation/board_predictions.json

@@ -154,6 +154,9 @@ def evaluate(config_path, workspace, num_override=None,
         raise SystemExit('dataset.input_size must be [height, width]')
     decode = config['decode']
     output = config.get('output', {})
+    pr_curve_file = output.get('pr_curve_file')
+    baseline_predictions_file = output.get('baseline_predictions_file')
+    board_predictions_file = output.get('board_predictions_file')
     decoder_options = {}
     if decode['mode'] == 'yolov5_headcut':
         decoder_options['anchors'] = decode['anchors']
@@ -168,7 +171,15 @@ def evaluate(config_path, workspace, num_override=None,
         vis_conf_threshold=float(output.get('vis_conf_threshold', 0.25)),
         vis_max_boxes=int(output.get('vis_max_boxes', 100)),
         decoder_options=decoder_options,
-        class_map=decode.get('class_map'))
+        class_map=decode.get('class_map'),
+        pr_curve_file=str(resolve_path(pr_curve_file, workspace))
+        if pr_curve_file else None,
+        baseline_predictions_file=(
+            str(resolve_path(baseline_predictions_file, workspace))
+            if baseline_predictions_file else None),
+        board_predictions_file=(
+            str(resolve_path(board_predictions_file, workspace))
+            if board_predictions_file else None))
 
     coco = COCO(str(annotation_path))
     limit = (num_override if num_override is not None

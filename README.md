@@ -22,10 +22,8 @@ VS859 或 RK3576 的模型。本文以 `basketball` 当前配置为主线，并�
 > 编译配置混在同一次构建中。
 >
 > 当前 Basketball 输入尺寸和校准目录已经统一为 `1024 x 3328` 与
-> `modes/basketball/datasets/calibration/images`。但 VS859 的 `quant.yaml`/`compile.yaml`
-> 走 head-cut 分支，`eval.yaml` 仍指向完整 raw deploy 模型并使用 `yolov8_raw` 解码。
-> 因此再次执行完整端到端评估前，仍须选择“完整模型评估”或“head-cut 评估”分支，
-> 并将三个 YAML 的模型基名统一；不能直接把当前三个配置视为同一次 PTQ 链路。
+> `modes/basketball/datasets/calibration/images`。VS859 的三个配置当前均走 head-cut
+> 分支，评估使用 `yolov8_headcut` 解码；量化前基线也必须使用同一 head-cut 输出形态。
 >
 > 不要直接连续执行全流程。先按本文“配置一致性检查”统一模型基名、输入尺寸和数据路径。
 
@@ -39,9 +37,10 @@ quant_folder/
 │   ├── evaluation/                         # COCO loader、metric、compare 汇总
 │   └── tools/
 │       ├── clean_model.py                  # OnnxConvertTool 包装器
-│       ├── cut_yolo_head.py                 # YOLOv5/v8/v11 裁切分发器
+│       ├── cut_yolo_head.py                 # YOLOv5/v8/v11/26 裁切分发器
 │       ├── cut_yolov5_head.py               # YOLOv5 三尺度 NHWC 输出裁切
-│       └── cut_yolov8_head.py               # YOLOv8/11 DFL 检测头裁切
+│       ├── cut_yolov8_head.py               # YOLOv8/11 DFL 检测头裁切
+│       └── cut_yolo26_head.py                # YOLO26 三尺度 box/class 分支裁切
 └── modes/basketball/
     ├── model/                              # 原始及处理后的 ONNX
     ├── datasets/
@@ -450,12 +449,11 @@ RK3576 使用独立的 `configs/rk3576/rknn.yaml`，至少检查：
 
 1. `quant.yaml` 量化 `...fp32_raw_headcut_raw.onnx`，activation 为 `int16`、weight 为 `int8`；
 2. `compile.yaml` 使用同基名的 head-cut deploy ONNX 和 quant param，输出到 `compile/vs859/`；
-3. `eval.yaml` 仍使用完整 `...fp32_raw_deploy_model.onnx` 和 `yolov8_raw` 解码；
+3. `eval.yaml` 使用同基名的 head-cut deploy ONNX 和 `yolov8_headcut` 解码；
 4. `outputs/quant/` 仍保留少量旧尺寸产物，文件存在不代表它属于本次构建。
 
-因此 VS859 编译链已经按 head-cut 基名和尺寸对齐，但 `quant -> eval -> compile` 不能直接串行
-代表同一个模型。正式端到端评估前，应为 head-cut 输出补齐对应 decoder 并让 `eval.yaml` 指向
-head-cut 产物，或者将三份配置全部切回完整 raw 分支。每次只能选择其中一条链。
+因此 VS859 的 `quant -> eval -> compile` 可以按当前 head-cut 基名和尺寸串行执行；量化前 PR
+基线另行使用同一 head-cut 模型生成。
 
 建议先检查所有关键路径：
 
@@ -658,7 +656,52 @@ modes/basketball/outputs/evaluation/visualizations/
 modes/basketball/outputs/evaluation/float_visualizations/
 ```
 
-### 7.3 逐层量化误差
+### 7.3 叠加 PR 曲线
+
+评估器会在 COCOeval 完成后，按 IoU=0.50 的 101 个 recall 采样点生成 PR 曲线。篮球模式已经在
+两个平台的 `eval.yaml` 中配置了以下输出：
+
+```text
+VS859:   modes/basketball/outputs/evaluation/pr_curve.svg
+RK3576:  modes/basketball/outputs/evaluation/rk3576/pr_curve.svg
+```
+
+图中红色实线是当前量化模型，蓝色虚线是量化前模型；若提供板端 predictions，则增加绿色点划线。
+图中包含 `all` 和每个类别的曲线，并在
+标题中标出对应 AP50。先生成与当前 `decode_mode`、输入尺寸一致的量化前预测 JSON，再执行量化模型评估即可。
+如果原始 ONNX 与量化模型输出形态一致，可以直接使用：
+
+```bash
+./run.sh basketball float-eval
+./run.sh basketball eval
+./run.sh basketball eval --platform rk3576
+```
+
+`float-eval` 会把基线预测写入
+`modes/basketball/outputs/evaluation/pre_quant_predictions.json`。如果只想手工生成基线，独立
+评估脚本也支持；当前 Basketball head-cut 配置应传入同样的 head-cut 浮点 ONNX：
+
+```bash
+python3 common/evaluation/yolo_coco_metric.py \
+  --config modes/basketball/configs/vs859/eval.yaml \
+  --model modes/basketball/model/<float_headcut_model>.onnx \
+  --pred-json modes/basketball/outputs/evaluation/pre_quant_predictions.json
+```
+
+如果还要叠加目标板实际运行结果，把板端生成的标准 COCO predictions 数组保存为：
+
+```text
+modes/basketball/outputs/evaluation/board_predictions.json
+```
+
+再次执行 `eval` 后，SVG 会增加绿色点划线板端曲线，并在每个面板标题中显示 `board=AP50`。
+板端 JSON 必须使用同一评估集的 `image_id`、`category_id`、`bbox` 和 `score`；缺少该文件时只
+生成量化模型与浮点基线两条曲线。
+
+量化前和量化模型必须使用相同的评估图片、COCO 标注、输入尺寸、decoder、置信度和 NMS 阈值，
+否则曲线不能用于直接比较。若基线 JSON 尚不存在，评估仍会生成当前模型的单条曲线，并打印提示。
+
+### 7.4 逐层量化误差
 
 把 `compare.yaml` 的模型、quant param 和代表图片改成本次构建后执行：
 
@@ -678,7 +721,7 @@ modes/basketball/outputs/evaluation/compare/REPORT.md
 差异越明显，但它不是最终 AP 贡献的直接因果证明。应结合 AP 下降、框图表现和层位置判断是否
 需要调整 observer、校准集或逐层精度。
 
-### 7.4 评估验收
+### 7.5 评估验收
 
 至少检查：
 
@@ -874,10 +917,11 @@ preprocess:
   std: [1.0, 1.0, 1.0]
 ```
 
-除 YOLO26 外，当前涉及的 YOLOv5/v8/v11 模型都在 `rknn.yaml` 中选择去头 ONNX，并显式设置
+当前涉及的 YOLOv5/v8/v11/26 模型都在 `rknn.yaml` 中选择去头 ONNX，并显式设置
 `do_quantization: true`、`dtype: w8a8`、`algorithm: normal` 和 `method: channel`。转换器仍会检查
-模型结构，避免重复裁切。YOLO26 使用原生 NMS-free 单输出 ONNX，并显式设置
-`do_quantization: false` 与 `float_dtype: float16`。
+模型结构，避免重复裁切。YOLO26 不能直接量化原生 `[1, 8, 69888]` 打包输出，因为坐标和类别
+概率会共享输出量化尺度；专用裁切器把它改成按 stride 8/16/32 排列的六个 box/class 输出后再做
+INT8。其 box 分支是四通道直接 `ltrb` 距离，不使用 YOLOv8/11 的 DFL 解码。
 
 RKNN 转换不会修改用于 Statlas 的源 ONNX。若模型含 `vsdeploy::Silu`，转换器会在模型
 同目录生成 `_rknn.onnx`，仅为 RKNN 展开成标准 `Sigmoid + Mul`。
@@ -918,7 +962,7 @@ RKNN 路径使用的是 `configs/rk3576/rknn.yaml:model.onnx_model`。
 |---|---|---|---|
 | `basketball` | YOLOv8, 1024 x 3328 | 去头 6 输出 | int8 |
 | `demo_v11` | YOLOv11, 1024 x 3328 | 去头 6 输出 | int8 |
-| `demo_v26` | YOLO26, 1024 x 3328 | 原生 NMS-free 单输出 | float |
+| `demo_v26` | YOLO26, 1024 x 3328 | 去头 6 输出（直接 ltrb + class logits） | int8 |
 | `demo_v5` | YOLOv5, 704 x 1280 | 去头 3 输出 | int8 |
 | `demo_v8` | YOLOv8, 960 x 960 | 去头 6 输出 | int8 |
 | `soccer` | YOLOv5, 1024 x 3328 | 清洗后去头 3 输出 | int8 |
@@ -942,7 +986,7 @@ modes/<mode>/outputs/compile/rk3576/
 | `build_config` | PC 模拟器重建模型时使用的 `rknn.yaml` |
 | `dataset.ann_file/img_dir` | COCO 标注和测试图片目录 |
 | `dataset.input_size/color_order` | RKNN 输入高宽和 RGB/BGR 顺序 |
-| `decode.mode` | `yolov5_headcut`、`yolov8_headcut` 或 `yolov8_raw` |
+| `decode.mode` | `yolov5_headcut`、`yolov8_headcut`、`yolo26_headcut` 或 `yolov8_raw` |
 | `decode.conf_threshold/iou_threshold` | 置信度阈值和逐类别 NMS 阈值 |
 | `decode.anchors` | YOLOv5 三尺度 anchor，仅 YOLOv5 使用 |
 | `decode.class_map` | 模型类别下标到 COCO category id 的映射 |
@@ -1026,8 +1070,9 @@ Toolkit2 会在对应目录生成逐层快照和量化误差结果，本项目�
 
 - RKNN 可以加载，输入/输出 tensor 数量、顺序、layout 和 dtype 与后处理一致；
 - RKNN runtime 的颜色顺序、resize 和 mean/std 与 `rknn.yaml` 及 ONNX 输入 shape 一致；
-- YOLOv5 三输出或 YOLOv8/11 六输出的 stride 顺序与对应 C++ 后处理一致；
-- YOLO26 packed 单输出按专用后处理契约解析；
+- YOLOv5 三输出或 YOLOv8/11/26 六输出的 stride 顺序与对应 C++ 后处理一致；
+- YOLO26 按 `box8, cls8, box16, cls16, box32, cls32` 解析，类别分支做 sigmoid，框分支按直接
+  `ltrb` 距离解码，不执行 DFL；
 - 同一测试图片上，板端结果与浮点/量化基线在可接受误差内；
 - 延迟、内存和长时间运行稳定性满足部署要求。
 

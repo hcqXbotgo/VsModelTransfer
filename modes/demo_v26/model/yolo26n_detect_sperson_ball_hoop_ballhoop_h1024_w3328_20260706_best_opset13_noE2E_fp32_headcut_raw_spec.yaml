@@ -1,0 +1,24 @@
+# Auto-generated YOLO26 host-decode specification.
+source: modes/demo_v26/model/yolo26n_detect_sperson_ball_hoop_ballhoop_h1024_w3328_20260706_best_opset13_noE2E_fp32.onnx
+layout: NCHW
+box_encoding: ltrb_distance
+num_classes: 4
+outputs:
+  - stride: 8
+    box: /model.23/cv2.0/cv2.0.2/Conv_output_0
+    cls: /model.23/cv3.0/cv3.0.2/Conv_output_0
+    box_shape: [1, 4, 128, 416]
+    cls_shape: [1, 4, 128, 416]
+  - stride: 16
+    box: /model.23/cv2.1/cv2.1.2/Conv_output_0
+    cls: /model.23/cv3.1/cv3.1.2/Conv_output_0
+    box_shape: [1, 4, 64, 208]
+    cls_shape: [1, 4, 64, 208]
+  - stride: 32
+    box: /model.23/cv2.2/cv2.2.2/Conv_output_0
+    cls: /model.23/cv3.2/cv3.2.2/Conv_output_0
+    box_shape: [1, 4, 32, 104]
+    cls_shape: [1, 4, 32, 104]
+
+# Host decode: xyxy=(grid_center + [-l,-t,r,b])*stride,
+# sigmoid on class logits, then per-class NMS.

@@ -9,6 +9,7 @@ from onnx import shape_inference
 
 import cut_yolov5_head
 import cut_yolov8_head
+import cut_yolo26_head
 
 
 def cut_head(input_path, output_path):
@@ -19,6 +20,9 @@ def cut_head(input_path, output_path):
 
     print('[cut_yolo_head] trying YOLOv8/11 DFL head')
     if cut_yolov8_head.cut_head(str(input_path), str(output_path)):
+        return True
+    print('[cut_yolo_head] trying YOLO26 NMS-free head')
+    if cut_yolo26_head.cut_head(str(input_path), str(output_path)):
         return True
     outputs = list(model.graph.output)
     if len(outputs) == 1 and len(

@@ -6,12 +6,12 @@ work_mode: PTQ
 quant:
   activation:
     observer: MinMaxObserver
-    dtype: int16
-    symmetry: True
+    dtype: int8
+    symmetry: False
   weight:
     observer: MinMaxObserver
     dtype: int8
-    symmetry: True
+    symmetry: False
     per_channel: True
 
 dataset:

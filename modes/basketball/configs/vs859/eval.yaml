@@ -1,6 +1,9 @@
 model:
-  onnx_model: modes/basketball/outputs/quant/yolov8n_detect_sperson_ball_hoop_ballhoop_h1024_w3328_20260720-2_best_opset13_fp32_raw_deploy_model.onnx
-  quant_param: modes/basketball/outputs/quant/yolov8n_detect_sperson_ball_hoop_ballhoop_h1024_w3328_20260720-2_best_opset13_fp32_raw_quant_param.yaml
+  # Use the deploy ONNX exported by StatlasQuant after PTQ. The calibrated
+  # intermediate contains the custom MegrezQuantize op and cannot be loaded
+  # by the Metric/onnx2torch path.
+  onnx_model: modes/basketball/outputs/quant/yolov8n_detect_sperson_ball_hoop_ballhoop_h1024_w3328_20260720-2_best_opset13_fp32_raw_headcut_raw_deploy_model.onnx
+  quant_param: modes/basketball/outputs/quant/yolov8n_detect_sperson_ball_hoop_ballhoop_h1024_w3328_20260720-2_best_opset13_fp32_raw_headcut_raw_quant_param.yaml
 
 work_mode: Metric
 
@@ -25,7 +28,7 @@ metric:
   parameters:
     annfile: modes/basketball/datasets/evaluation/annotations/instances.json
     img_size: [1024, 3328]
-    decode_mode: yolov8_raw
+    decode_mode: yolov8_headcut
     conf_threshold: 0.25
     iou_threshold: 0.7
     img_dir: modes/basketball/datasets/evaluation/images
@@ -33,6 +36,11 @@ metric:
     vis_num: 20
     vis_conf_threshold: 0.25
     vis_max_boxes: 100
+    # Run `./run.sh basketball float-eval` first to create the baseline JSON.
+    pr_curve_file: modes/basketball/outputs/evaluation/pr_curve.svg
+    baseline_predictions_file: modes/basketball/outputs/evaluation/pre_quant_predictions.json
+    # Optional board predictions; missing file is ignored.
+    board_predictions_file: modes/basketball/outputs/evaluation/board_predictions.json
   result_file: metric_result.csv
 
 out_dir: modes/basketball/outputs/evaluation

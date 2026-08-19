@@ -3,7 +3,7 @@ YOLO COCO metric with NMS + confidence filtering.
 - StatlasQuant eval: config uses type=extern_python, source=yolo_coco_metric.py
 - Standalone demo:  python yolo_coco_metric.py --config <eval.yaml> [--num N] [--conf C]
 """
-import sys, os, json, tempfile, contextlib, io
+import sys, os, json, tempfile, contextlib, io, html
 from collections import defaultdict
 import numpy as np
 import torch
@@ -250,6 +250,55 @@ def _decode_yolov8_headcut(outputs, img_h, img_w, img_size):
     return bboxes, scores, cls.long()
 
 
+def _decode_yolo26_headcut(outputs, img_h, img_w, img_size):
+    """Decode six YOLO26 raw distance/class maps without DFL."""
+    if len(outputs) != 6:
+        raise ValueError('yolo26_headcut requires six outputs, got {}'.format(
+            len(outputs)))
+    in_h, in_w = img_size
+    boxes_all, scores_all, classes_all = [], [], []
+    for index in range(0, 6, 2):
+        box = _feature_chw(outputs[index], img_size)
+        cls = _feature_chw(outputs[index + 1], img_size)
+        if box.shape[0] != 4 or box.shape[1:] != cls.shape[1:]:
+            raise ValueError(
+                'invalid YOLO26 box/class pair: {} and {}'.format(
+                    tuple(box.shape), tuple(cls.shape)))
+        _, height, width = box.shape
+        stride_h, stride_w = in_h // height, in_w // width
+        if stride_h != stride_w or stride_h not in (8, 16, 32):
+            raise ValueError('invalid YOLO26 feature size {}x{}'.format(
+                height, width))
+        stride = stride_h
+        distance = box.reshape(4, -1)
+        gy, gx = torch.meshgrid(
+            torch.arange(height, dtype=distance.dtype,
+                         device=distance.device),
+            torch.arange(width, dtype=distance.dtype,
+                         device=distance.device),
+            indexing='ij')
+        anchor_x = gx.reshape(-1) + 0.5
+        anchor_y = gy.reshape(-1) + 0.5
+        x1 = (anchor_x - distance[0]) * stride
+        y1 = (anchor_y - distance[1]) * stride
+        x2 = (anchor_x + distance[2]) * stride
+        y2 = (anchor_y + distance[3]) * stride
+        boxes_all.append(torch.stack(
+            (x1, y1, x2 - x1, y2 - y1), dim=1))
+        probabilities = torch.sigmoid(cls.reshape(cls.shape[0], -1))
+        scores, classes = probabilities.max(dim=0)
+        scores_all.append(scores)
+        classes_all.append(classes)
+
+    bboxes = torch.cat(boxes_all, dim=0)
+    bboxes[:, 0] *= float(img_w) / float(in_w)
+    bboxes[:, 2] *= float(img_w) / float(in_w)
+    bboxes[:, 1] *= float(img_h) / float(in_h)
+    bboxes[:, 3] *= float(img_h) / float(in_h)
+    return (bboxes, torch.cat(scores_all),
+            torch.cat(classes_all).long())
+
+
 def _decode_yolov5_headcut(outputs, img_h, img_w, img_size, anchors):
     """Decode the three sigmoid NHWC branches used by RK YOLOv5 runtime."""
     if len(anchors) != 3 or any(len(scale) != 6 for scale in anchors):
@@ -313,6 +362,7 @@ DECODERS = {
     'post_nms': _decode_post_nms,
     'yolov8_raw': _decode_yolov8_raw,
     'yolov8_headcut': _decode_yolov8_headcut,
+    'yolo26_headcut': _decode_yolo26_headcut,
     'yolov5_headcut': _decode_yolov5_headcut,
 }
 
@@ -334,6 +384,155 @@ def _nms_per_class(bboxes_xyxy, scores, cls_ids, iou_threshold):
     return keep
 
 
+def _pr_curve_data(coco_eval):
+    """Return the COCOeval IoU=0.50 PR curves used by the SVG report."""
+    precision = coco_eval.eval.get('precision')
+    if precision is None:
+        return []
+
+    area_index = 0
+    max_det_index = -1
+    recall = np.asarray(coco_eval.params.recThrs, dtype=np.float64)
+    category_ids = list(coco_eval.params.catIds)
+    categories = {
+        category['id']: category['name']
+        for category in coco_eval.cocoGt.loadCats(category_ids)
+    }
+
+    curves = []
+    all_curves = []
+    for category_index, category_id in enumerate(category_ids):
+        curve = np.asarray(
+            precision[0, :, category_index, area_index, max_det_index],
+            dtype=np.float64,
+        ).copy()
+        curve[curve < 0] = np.nan
+        if np.isfinite(curve).any():
+            all_curves.append(curve)
+        curves.append((category_id, categories.get(category_id, str(category_id)), curve))
+
+    if all_curves:
+        with np.errstate(invalid='ignore'):
+            all_curve = np.nanmean(np.stack(all_curves, axis=0), axis=0)
+    else:
+        all_curve = np.full_like(recall, np.nan)
+    curves.insert(0, (None, 'all', all_curve))
+    return recall, curves
+
+
+def _curve_ap50(curve):
+    valid = np.asarray(curve, dtype=np.float64)
+    valid = valid[np.isfinite(valid)]
+    return float(valid.mean()) if valid.size else 0.0
+
+
+def _write_pr_curve_svg(path, current_eval, baseline_eval=None,
+                        board_eval=None, current_label='quantized',
+                        baseline_label='pre-quant', board_label='board'):
+    """Write a dependency-free SVG containing overall and per-class PR curves."""
+    current_data = _pr_curve_data(current_eval)
+    if not current_data:
+        return
+    recall, current_curves = current_data
+    baseline_by_id = {}
+    board_by_id = {}
+    if baseline_eval is not None:
+        baseline_data = _pr_curve_data(baseline_eval)
+        if baseline_data:
+            baseline_recall, baseline_curves = baseline_data
+            baseline_by_id = {item[0]: item[2] for item in baseline_curves}
+            if len(baseline_recall) != len(recall) or not np.allclose(baseline_recall, recall):
+                baseline_by_id = {}
+    if board_eval is not None:
+        board_data = _pr_curve_data(board_eval)
+        if board_data:
+            board_recall, board_curves = board_data
+            board_by_id = {item[0]: item[2] for item in board_curves}
+            if len(board_recall) != len(recall) or not np.allclose(board_recall, recall):
+                board_by_id = {}
+
+    width, height = 1200, 760
+    panel_width, panel_height = 380, 350
+    margin_x, margin_y = 25, 80
+    chart_left, chart_top = 48, 42
+    chart_width, chart_height = 300, 245
+    colors = {'current': '#d62728', 'baseline': '#1f77b4'}
+
+    def polyline(curve, x, y):
+        values = np.asarray(curve, dtype=np.float64)
+        valid = np.isfinite(values)
+        if not valid.any():
+            return ''
+        points = []
+        for index in np.flatnonzero(valid):
+            px = x + float(recall[index]) * chart_width
+            py = y + (1.0 - float(np.clip(values[index], 0.0, 1.0))) * chart_height
+            points.append('{:.2f},{:.2f}'.format(px, py))
+        return ' '.join(points)
+
+    svg = [
+        '<svg xmlns="http://www.w3.org/2000/svg" width="{}" height="{}" viewBox="0 0 {} {}">'.format(width, height, width, height),
+        '<rect width="100%" height="100%" fill="white"/>',
+        '<style>text{font-family:Arial,sans-serif;fill:#222} .grid{stroke:#ddd;stroke-width:1} .axis{stroke:#555;stroke-width:1} .curve{fill:none;stroke-width:2} .legend{font-size:13px}</style>',
+        '<text x="{}" y="32" font-size="22" font-weight="bold">Precision-Recall curves (IoU = 0.50)</text>'.format(margin_x),
+    ]
+    panel_count = len(current_curves)
+    for panel_index, (category_id, name, curve) in enumerate(current_curves):
+        col = panel_index % 3
+        row = panel_index // 3
+        px = margin_x + col * panel_width
+        py = margin_y + row * panel_height
+        x = px + chart_left
+        y = py + chart_top
+        baseline_curve = baseline_by_id.get(category_id)
+        board_curve = board_by_id.get(category_id)
+        title = '{}  AP50={:.4f}'.format(name, _curve_ap50(curve))
+        if baseline_curve is not None:
+            title += '  pre={:.4f}'.format(_curve_ap50(baseline_curve))
+        if board_curve is not None:
+            title += '  board={:.4f}'.format(_curve_ap50(board_curve))
+        svg.append('<text x="{}" y="{}" font-size="15" font-weight="bold">{}</text>'.format(x, py + 22, html.escape(title)))
+        for tick in (0.0, 0.25, 0.5, 0.75, 1.0):
+            gx = x + tick * chart_width
+            gy = y + (1.0 - tick) * chart_height
+            svg.append('<line class="grid" x1="{:.2f}" y1="{}" x2="{:.2f}" y2="{}"/>'.format(gx, y, gx, y + chart_height))
+            svg.append('<line class="grid" x1="{}" y1="{:.2f}" x2="{}" y2="{:.2f}"/>'.format(x, gy, x + chart_width, gy))
+            svg.append('<text x="{:.2f}" y="{}" font-size="10" text-anchor="middle">{:.2g}</text>'.format(gx, y + chart_height + 16, tick))
+            svg.append('<text x="{}" y="{:.2f}" font-size="10" text-anchor="end">{:.2g}</text>'.format(x - 6, gy + 3, tick))
+        svg.append('<line class="axis" x1="{}" y1="{}" x2="{}" y2="{}"/>'.format(x, y + chart_height, x + chart_width, y + chart_height))
+        svg.append('<line class="axis" x1="{}" y1="{}" x2="{}" y2="{}"/>'.format(x, y, x, y + chart_height))
+        points = polyline(curve, x, y)
+        if points:
+            svg.append('<polyline class="curve" stroke="{}" points="{}"/>'.format(colors['current'], points))
+        if baseline_curve is not None:
+            points = polyline(baseline_curve, x, y)
+            if points:
+                svg.append('<polyline class="curve" stroke="{}" stroke-dasharray="7,4" points="{}"/>'.format(colors['baseline'], points))
+        if board_curve is not None:
+            points = polyline(board_curve, x, y)
+            if points:
+                svg.append('<polyline class="curve" stroke="#2ca02c" stroke-dasharray="3,3" points="{}"/>'.format(points))
+        svg.append('<text x="{}" y="{}" font-size="11" text-anchor="middle">Recall</text>'.format(x + chart_width / 2, y + chart_height + 34))
+        svg.append('<text x="{}" y="{}" font-size="11" text-anchor="middle" transform="rotate(-90 {} {})">Precision</text>'.format(x - 34, y + chart_height / 2, x - 34, y + chart_height / 2))
+
+    legend_y = height - 18
+    svg.append('<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" class="curve"/>'.format(margin_x, legend_y, margin_x + 28, legend_y, colors['current']))
+    svg.append('<text class="legend" x="{}" y="{}">{}</text>'.format(margin_x + 36, legend_y + 5, html.escape(current_label)))
+    if baseline_by_id:
+        offset = margin_x + 180
+        svg.append('<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-dasharray="7,4" class="curve"/>'.format(offset, legend_y, offset + 28, legend_y, colors['baseline']))
+        svg.append('<text class="legend" x="{}" y="{}">{}</text>'.format(offset + 36, legend_y + 5, html.escape(baseline_label)))
+    if board_by_id:
+        offset = margin_x + 360
+        svg.append('<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="#2ca02c" stroke-dasharray="3,3" class="curve"/>'.format(offset, legend_y, offset + 28, legend_y))
+        svg.append('<text class="legend" x="{}" y="{}">{}</text>'.format(offset + 36, legend_y + 5, html.escape(board_label)))
+    svg.append('</svg>')
+    directory = os.path.dirname(os.path.abspath(path))
+    os.makedirs(directory, exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as stream:
+        stream.write('\n'.join(svg))
+
+
 # ── COCO eval core ─────────────────────────────────────
 
 class CocoEvalBase:
@@ -341,7 +540,9 @@ class CocoEvalBase:
                  conf_threshold=0.001, iou_threshold=0.65,
                  img_dir=None, vis_dir=None, vis_num=0,
                  vis_conf_threshold=0.25, vis_max_boxes=100,
-                 visualize_only=False, decoder_options=None, class_map=None):
+                 visualize_only=False, decoder_options=None, class_map=None,
+                 pr_curve_file=None, baseline_predictions_file=None,
+                 board_predictions_file=None):
         from pycocotools.coco import COCO
         annfile = _get_absolute_path(annfile)
         self.coco = COCO(annfile)
@@ -360,6 +561,14 @@ class CocoEvalBase:
         self.vis_conf_threshold = float(vis_conf_threshold)
         self.vis_max_boxes = int(vis_max_boxes)
         self.visualize_only = bool(visualize_only)
+        self.pr_curve_file = (_get_absolute_path(pr_curve_file)
+                              if pr_curve_file else None)
+        self.baseline_predictions_file = (
+            _get_absolute_path(baseline_predictions_file)
+            if baseline_predictions_file else None)
+        self.board_predictions_file = (
+            _get_absolute_path(board_predictions_file)
+            if board_predictions_file else None)
         self.decoder_options = decoder_options or {}
         self.class_map = ({int(key): int(value)
                            for key, value in class_map.items()}
@@ -374,7 +583,8 @@ class CocoEvalBase:
 
     def process_output(self, output, img_h, img_w, img_id):
         self.img_ids.add(int(img_id))
-        if self.decode_mode in ('yolov8_headcut', 'yolov5_headcut'):
+        if self.decode_mode in ('yolov8_headcut', 'yolov5_headcut',
+                                'yolo26_headcut'):
             bboxes, scores, cls = self.decode_fn(
                 output, img_h, img_w, self.img_size,
                 **self.decoder_options)
@@ -390,8 +600,11 @@ class CocoEvalBase:
                     bboxes_part = flat[:, 0:4]
                     cls_part = flat[:, 4:]
                     f.write(f'\nbbox col range: min={bboxes_part.min().item():.4f} max={bboxes_part.max().item():.4f}\n')
-                    f.write(f'cls col range: min={cls_part.min().item():.4f} max={cls_part.max().item():.4f}\n')
-                    f.write(f'cls sigmoid max per col: {torch.sigmoid(cls_part).max(dim=0).values.tolist()}\n')
+                    if cls_part.numel() > 0:
+                        f.write(f'cls col range: min={cls_part.min().item():.4f} max={cls_part.max().item():.4f}\n')
+                        f.write(f'cls sigmoid max per col: {torch.sigmoid(cls_part).max(dim=0).values.tolist()}\n')
+                    else:
+                        f.write('cls columns: none\n')
                 self._debug_printed = True
             bboxes, scores, cls = self.decode_fn(output, img_h, img_w, self.img_size)
             if not getattr(self, '_debug_decoded', False):
@@ -1007,6 +1220,46 @@ class CocoEvalBase:
                 coco_eval.accumulate()
                 coco_eval.summarize()
 
+            if self.pr_curve_file:
+                baseline_eval = None
+                board_eval = None
+                if self.baseline_predictions_file:
+                    if not os.path.isfile(self.baseline_predictions_file):
+                        print('PR baseline not found; writing current-only curve: {}'.format(
+                            self.baseline_predictions_file))
+                    else:
+                        baseline_dt = self.coco.loadRes(
+                            self.baseline_predictions_file
+                        )
+                        from pycocotools.cocoeval import COCOeval
+                        baseline_eval = COCOeval(
+                            self.coco,
+                            baseline_dt,
+                            'bbox',
+                        )
+                        baseline_eval.params.imgIds = sorted(self.img_ids)
+                        with contextlib.redirect_stdout(io.StringIO()):
+                            baseline_eval.evaluate()
+                            baseline_eval.accumulate()
+                if self.board_predictions_file:
+                    if not os.path.isfile(self.board_predictions_file):
+                        print('Board predictions not found; omitting board curve: {}'.format(
+                            self.board_predictions_file))
+                    else:
+                        board_dt = self.coco.loadRes(self.board_predictions_file)
+                        from pycocotools.cocoeval import COCOeval
+                        board_eval = COCOeval(self.coco, board_dt, 'bbox')
+                        board_eval.params.imgIds = sorted(self.img_ids)
+                        with contextlib.redirect_stdout(io.StringIO()):
+                            board_eval.evaluate()
+                            board_eval.accumulate()
+                _write_pr_curve_svg(
+                    self.pr_curve_file,
+                    coco_eval,
+                    baseline_eval,
+                    board_eval,
+                )
+
             yolo_table = (
                 self._build_yolo_style_table(
                     coco_eval
@@ -1064,7 +1317,10 @@ class metric_target(Metric):
                  decode_mode='yolov5', conf_threshold=0.001,
                  iou_threshold=0.65, img_dir=None, vis_dir=None,
                  vis_num=0, vis_conf_threshold=0.25,
-                 vis_max_boxes=100, visualize_only=False, **kwargs):
+                 vis_max_boxes=100, visualize_only=False,
+                 pr_curve_file=None, baseline_predictions_file=None,
+                 board_predictions_file=None,
+                 **kwargs):
         super().__init__()
         self.eval = CocoEvalBase(annfile, img_size, decode_mode,
                                  conf_threshold=conf_threshold,
@@ -1073,7 +1329,10 @@ class metric_target(Metric):
                                  vis_num=vis_num,
                                  vis_conf_threshold=vis_conf_threshold,
                                  vis_max_boxes=vis_max_boxes,
-                                 visualize_only=visualize_only)
+                                 visualize_only=visualize_only,
+                                 pr_curve_file=pr_curve_file,
+                                 baseline_predictions_file=baseline_predictions_file,
+                                 board_predictions_file=board_predictions_file)
         self.data_list = [[], []]
         self.img_ids = [set(), set()]
         self.results = [[-1, -1, ''], [-1, -1, '']]
@@ -1089,7 +1348,7 @@ class metric_target(Metric):
     def update(self, preds, target, is_convert_model=True):
         id = 0 if is_convert_model else 1
         _, info_imgs, ids = target
-        if self.eval.decode_mode == 'yolov8_headcut':
+        if self.eval.decode_mode in ('yolov8_headcut', 'yolo26_headcut'):
             # head-cut model: preds is the 6-output list for a single batch
             # (box,cls per scale); pass all outputs to the host decoder at once.
             img_h = info_imgs[0][0]
@@ -1126,13 +1385,17 @@ class metric_target(Metric):
         if len(self.data_list[id]) > 0:
             saved = self.eval.data_list
             saved_img_ids = self.eval.img_ids
+            saved_pr_curve_file = self.eval.pr_curve_file
             self.eval.data_list = self.data_list[id]
             self.eval.img_ids = self.img_ids[id]
-            ap50_95, ap50, info = self.eval.compute()
-            self.data_list[id] = self.eval.data_list
-            self.img_ids[id] = self.eval.img_ids
-            self.eval.data_list = saved
-            self.eval.img_ids = saved_img_ids
+            try:
+                ap50_95, ap50, info = self.eval.compute()
+            finally:
+                self.data_list[id] = self.eval.data_list
+                self.img_ids[id] = self.eval.img_ids
+                self.eval.data_list = saved
+                self.eval.img_ids = saved_img_ids
+                self.eval.pr_curve_file = saved_pr_curve_file
             self.results[id] = [ap50_95, ap50, info]
         else:
             self.results[id] = [0, 0, '']
@@ -1184,8 +1447,15 @@ def demo():
                     help='Max images; 0 uses the config limit or all images')
     ap.add_argument('--conf', type=float,
                     help='Override the config confidence threshold')
+    ap.add_argument('--decode-mode', choices=sorted(DECODERS),
+                    help='Override decoder for the selected model')
     ap.add_argument('--vis-dir', help='Override visualization output directory')
     ap.add_argument('--pred-json', help='Write decoded predictions as COCO JSON')
+    ap.add_argument('--baseline-predictions',
+                    help='COCO JSON predictions from the pre-quantized model')
+    ap.add_argument('--board-predictions',
+                    help='COCO JSON predictions from the target board')
+    ap.add_argument('--pr-curve', help='Output SVG path for PR curves')
     ap.add_argument('--skip-metric', action='store_true',
                     help='Skip COCO metric computation (for unlabeled images)')
     args = ap.parse_args()
@@ -1209,7 +1479,7 @@ def demo():
         return tuple(value)
 
     img_size = size_pair(m['img_size'])
-    decode_mode = m.get('decode_mode', 'yolov5')
+    decode_mode = args.decode_mode or m.get('decode_mode', 'yolov5')
     configured_num = d.get('num_samples', 5000)
     resize_size = size_pair(d.get('resize_size', img_size))
     crop_size = size_pair(d.get('crop_size', img_size))
@@ -1245,6 +1515,17 @@ def demo():
         vis_dir = os.path.join(cwd, vis_dir)
     inference_conf = (args.conf if args.conf is not None
                       else m.get('conf_threshold', 0.001))
+    baseline_predictions = (args.baseline_predictions
+                            or m.get('baseline_predictions_file'))
+    board_predictions = (args.board_predictions
+                         or m.get('board_predictions_file'))
+    pr_curve_file = args.pr_curve or m.get('pr_curve_file')
+    if baseline_predictions and not os.path.isabs(baseline_predictions):
+        baseline_predictions = os.path.join(cwd, baseline_predictions)
+    if board_predictions and not os.path.isabs(board_predictions):
+        board_predictions = os.path.join(cwd, board_predictions)
+    if pr_curve_file and not os.path.isabs(pr_curve_file):
+        pr_curve_file = os.path.join(cwd, pr_curve_file)
     evaluator = CocoEvalBase(
         annfile, img_size, decode_mode,
         conf_threshold=inference_conf,
@@ -1254,7 +1535,10 @@ def demo():
         vis_num=m.get('vis_num', 0),
         vis_conf_threshold=m.get('vis_conf_threshold', 0.25),
         vis_max_boxes=m.get('vis_max_boxes', 100),
-        visualize_only=m.get('visualize_only', False))
+        visualize_only=m.get('visualize_only', False),
+        pr_curve_file=pr_curve_file,
+        baseline_predictions_file=baseline_predictions,
+        board_predictions_file=board_predictions)
     img_ids = sorted(evaluator.coco.imgs.keys())
     limits = [value for value in (args.num, configured_num) if value > 0]
     num = min(limits) if limits else len(img_ids)

@@ -207,8 +207,9 @@ def cut_head_command(mode, input_path=None, output_path=None):
     """Build the head-cut command for a supported YOLO ONNX.
 
     YOLOv5 becomes three NHWC sigmoid outputs for the embedded C++ decoder.
-    YOLOv8/11 becomes raw 4D DFL feature maps. Pass input_path/output_path
-    to cut an arbitrary ONNX.
+    YOLOv8/11 becomes raw 4D DFL feature maps. YOLO26 becomes six raw 4D
+    outputs whose box branches contain direct ltrb distances. Pass
+    input_path/output_path to cut an arbitrary ONNX.
     """
     python = require(executable('STATLAS_PYTHON', DEFAULT_PYTHON, 'python3'),
                      'Python')
@@ -237,9 +238,15 @@ def float_eval_command(mode):
                         'float ONNX evaluator')
     vis_dir = (MODES_ROOT / mode / 'outputs' / 'evaluation' /
                'float_visualizations')
+    pred_json = (MODES_ROOT / mode / 'outputs' / 'evaluation' /
+                 'pre_quant_predictions.json')
+    # The original export is a packed raw YOLO tensor.  Head-cut eval configs
+    # describe the deployment model, so use the raw decoder for float-eval.
+    raw_decode = 'yolov5' if mode in ('demo_v5', 'soccer') else 'yolov8_raw'
     return [python, evaluator, '--config', config(mode, 'eval'),
             '--model', original_model(mode), '--num', '0',
-            '--vis-dir', vis_dir]
+            '--decode-mode', raw_decode,
+            '--vis-dir', vis_dir, '--pred-json', pred_json]
 
 
 def compare_commands(mode):
