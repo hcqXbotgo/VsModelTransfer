@@ -241,9 +241,17 @@ RKNN 环境使用该目录的 Toolkit2 2.3.2 wheel，并固定 `onnx==1.16.2`；
    `AMBARELLA_IMAGE_TAR`，再调用 `RunContainer.sh`，并额外挂载 `/home/falcon2`。
 4. 用 Podman 检查容器确实处于 `running` 状态后，把名称和路径写入 `env.sh` 的 managed block。
 
-默认从仓库内的 `dependencies/amba` 查找安霸容器包，支持把解压后的发布目录直接放在
-`dependencies/amba`，也支持放在其下的一级/多级子目录。镜像压缩包还会自动在
-`dependencies/amba` 和 `dependencies` 根目录查找。可以通过环境变量或选项覆盖：
+安霸容器准备采用二选一方式：
+
+1. 如果 `dependencies/amba` 已经存在并包含 `RunContainer.sh`，setup 直接使用其中的
+  脚本和内部镜像包；
+2. 如果 `dependencies/amba` 尚未准备好，则把厂商发布的完整 `*.tar.bz2` 包放到
+   `dependencies` 根目录，setup 会在首次启用安霸时自动解压生成 `dependencies/amba`，
+   再定位其中的 `RunContainer.sh`、镜像加载脚本和内部 `ambacontainer*.tar`，导入镜像
+   并启动容器。
+
+内部镜像压缩包只在 `dependencies/amba` 目录树中查找，不再把 `dependencies` 根目录
+当作已解压容器目录。可以通过环境变量或选项覆盖：
 
 ```bash
 ./setup_conda_envs.sh --ambarella-only \

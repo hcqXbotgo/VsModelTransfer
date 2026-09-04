@@ -35,7 +35,7 @@ export AMBARELLA_CONTAINER_DIR="/path/to/quant_folder/dependencies/amba"
 # The image archive is loaded only when the expected image is absent. It is
 # about 30 GB, so --dry-run never loads it and normal Conda setup does not
 # initialize Ambarella unless --ambarella/--ambarella-only is supplied.
-export AMBARELLA_IMAGE_TAR="/path/to/quant_folder/dependencies/ambacontainer_2404_cuda12.9_cudnn_sdk_onnx_v3.9.1.0.tar"
+export AMBARELLA_IMAGE_TAR="/path/to/quant_folder/dependencies/amba/ambacontainer_2404_cuda12.9_cudnn_sdk_onnx_v3.9.1.0.tar"
 # Optional overrides used by the setup script.
 # export AMBARELLA_RUN_SCRIPT="${AMBARELLA_CONTAINER_DIR}/RunContainer.sh"
 # export AMBARELLA_IMAGE_LOADER="${AMBARELLA_CONTAINER_DIR}/AmbaContainerPreBuildImageLoader.sh"

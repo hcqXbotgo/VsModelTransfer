@@ -58,8 +58,9 @@ STATLAS_DIR="${ROOT}/dependencies/statlas"
 RKNN_DIR="${ROOT}/dependencies/rknn-toolkit2-2.3.2/rknn-toolkit2/packages/x86_64"
 
 # The Ambarella SDK is distributed as a Podman image.  Keep the default bundle
-# inside this repository so setup is portable.  A bundle may either be
-# extracted directly to dependencies/amba or to a directory below it.
+# inside this repository so setup is portable.  An existing dependencies/amba
+# directory is used directly; otherwise setup can create it from a release
+# archive placed in dependencies/.
 AMBARELLA_DEFAULT_DIR="${ROOT}/dependencies/amba"
 AMBARELLA_LEGACY_DIR="/home/falcon2/docker/20260612_AmbaContainer_PreBuildImage_v3.9.1.0.2228_ubu2404_onnx"
 if [[ -z "${_CALLER_AMBARELLA_DIR_SET}" &&
@@ -72,9 +73,9 @@ if [[ -z "${_CALLER_AMBARELLA_TAR_SET}" &&
 fi
 AMBARELLA_CONTAINER_DIR="${AMBARELLA_CONTAINER_DIR:-${AMBARELLA_DEFAULT_DIR}}"
 
-# Resolve a package extracted one level below dependencies/amba.  This keeps
-# both `dependencies/amba/RunContainer.sh` and the original release bundle
-# layout (`dependencies/amba/<release>/RunContainer.sh`) working.
+# Resolve a package extracted below dependencies/amba.  The normal automatic
+# extraction puts RunContainer.sh directly in dependencies/amba, while the
+# nested lookup also handles an archive that retains its release directory.
 if [[ ! -x "${AMBARELLA_CONTAINER_DIR}/RunContainer.sh" &&
       -d "${AMBARELLA_CONTAINER_DIR}" ]]; then
     _amba_run="$(find "${AMBARELLA_CONTAINER_DIR}" -maxdepth 3 -type f \
@@ -89,10 +90,6 @@ AMBARELLA_IMAGE_LOADER="${AMBARELLA_IMAGE_LOADER:-${AMBARELLA_CONTAINER_DIR}/Amb
 if [[ -z "${AMBARELLA_IMAGE_TAR:-}" ]]; then
     _amba_tar="$(find "${AMBARELLA_CONTAINER_DIR}" -maxdepth 2 -type f \
         -name 'ambacontainer*.tar' -print -quit 2>/dev/null || true)"
-    if [[ -z "${_amba_tar}" ]]; then
-        _amba_tar="$(find "${ROOT}/dependencies" -maxdepth 1 -type f \
-            -name 'ambacontainer*.tar' -print -quit 2>/dev/null || true)"
-    fi
     AMBARELLA_IMAGE_TAR="${_amba_tar:-${AMBARELLA_CONTAINER_DIR}/ambacontainer_2404_cuda12.9_cudnn_sdk_onnx_v3.9.1.0.tar}"
     unset _amba_tar
 fi
@@ -223,6 +220,34 @@ run() {
     fi
 }
 
+prepare_ambarella_bundle() {
+    # The downloadable SDK package is a bzip2-compressed release archive.
+    # It contains RunContainer.sh and the inner Podman image archive.  Expand
+    # it into the repository-local bundle directory once, so users only need
+    # to copy the vendor-provided .tar.bz2 into dependencies/.
+    local bundle_root="${ROOT}/dependencies/amba"
+    local archive
+    if [[ -x "${bundle_root}/RunContainer.sh" ]]; then
+        return 0
+    fi
+    archive="$(find "${ROOT}/dependencies" -maxdepth 1 -type f \
+        \( -iname '*.tar.bz2' -o -iname '*.tbz2' \) \
+        -print -quit 2>/dev/null || true)"
+    if [[ -z "${archive}" ]]; then
+        return 0
+    fi
+    echo "Extracting Ambarella SDK bundle: ${archive}"
+    mkdir -p "${bundle_root}"
+    tar -xjf "${archive}" -C "${bundle_root}" --strip-components=1
+    chmod +x "${bundle_root}/RunContainer.sh" \
+        "${bundle_root}/AmbaContainerPreBuildImageLoader.sh" 2>/dev/null || true
+    if [[ ! -x "${bundle_root}/RunContainer.sh" ]]; then
+        echo "Ambarella archive was extracted, but RunContainer.sh was not found under ${bundle_root}." >&2
+        exit 1
+    fi
+    echo "Ambarella SDK bundle ready: ${bundle_root}"
+}
+
 require_file() {
     [[ -f "$1" ]] || { echo "Required file not found: $1" >&2; exit 1; }
 }
@@ -330,6 +355,20 @@ ensure_ambarella() {
         echo "podman was not found; install Podman or omit --ambarella." >&2
         exit 1
     }
+    if [[ -z "${_CALLER_AMBARELLA_DIR_SET}" &&
+          "${AMBARELLA_CONTAINER_DIR}" == "${AMBARELLA_DEFAULT_DIR}" ]]; then
+        prepare_ambarella_bundle
+        if [[ -x "${AMBARELLA_DEFAULT_DIR}/RunContainer.sh" ]]; then
+            AMBARELLA_RUN_SCRIPT="${AMBARELLA_DEFAULT_DIR}/RunContainer.sh"
+            AMBARELLA_IMAGE_LOADER="${AMBARELLA_DEFAULT_DIR}/AmbaContainerPreBuildImageLoader.sh"
+            if [[ -z "${_CALLER_AMBARELLA_TAR_SET}" ]]; then
+                _amba_tar="$(find "${AMBARELLA_DEFAULT_DIR}" -maxdepth 2 -type f \
+                    -name 'ambacontainer*.tar' -print -quit 2>/dev/null || true)"
+                AMBARELLA_IMAGE_TAR="${_amba_tar:-${AMBARELLA_DEFAULT_DIR}/ambacontainer_2404_cuda12.9_cudnn_sdk_onnx_v3.9.1.0.tar}"
+                unset _amba_tar
+            fi
+        fi
+    fi
     # Prefer the value already exported by env.sh, then the launcher's saved
     # name.  A stopped container is restarted instead of creating a duplicate.
     if [[ -n "${AMBARELLA_CONTAINER}" ]] && \
