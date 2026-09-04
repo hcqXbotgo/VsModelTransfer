@@ -24,6 +24,16 @@ def rknn_model_path(config, workspace):
     return resolve_path(config['model']['onnx_model'], workspace)
 
 
+def _sequence_windows(paths, sequence_length, frame_step):
+    last_start = len(paths) - 1 - (sequence_length - 1) * frame_step
+    if last_start < 0:
+        raise SystemExit(
+            'RKNN calibration set needs at least {} images for {} inputs'.format(
+                1 + (sequence_length - 1) * frame_step, sequence_length))
+    return [paths[start:start + sequence_length * frame_step:frame_step]
+            for start in range(last_start + 1)]
+
+
 def write_dataset(config, output_path, workspace):
     dataset = config['dataset']
     image_dir = resolve_path(dataset['root'], workspace)
@@ -32,17 +42,23 @@ def write_dataset(config, output_path, workspace):
             image_dir))
     images = sorted(path for path in image_dir.iterdir()
                     if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES)
+    sequence_length = int(dataset.get('sequence_length', 1))
+    frame_step = int(dataset.get('frame_step', 1))
+    if sequence_length < 1 or frame_step < 1:
+        raise SystemExit('RKNN sequence_length and frame_step must be positive')
+    windows = _sequence_windows(images, sequence_length, frame_step)
     sample_count = int(dataset.get('sample_count', 0))
     if sample_count > 0:
-        images = images[:sample_count]
-    if not images:
+        windows = windows[:sample_count]
+    if not windows:
         raise SystemExit('No RKNN calibration images found under {}'.format(
             image_dir))
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
-        ''.join('{}\n'.format(path.resolve()) for path in images),
+        ''.join('{}\n'.format(' '.join(str(path.resolve()) for path in window))
+                for window in windows),
         encoding='utf-8')
-    return images
+    return windows
 
 
 def should_quantize(head_type):
@@ -62,6 +78,19 @@ def conversion_options(config, platform, head_type):
     quant = config.get('quant', {})
     build = config.get('build', {})
     preprocess = config.get('preprocess', {})
+    input_count = int(config.get('model', {}).get('input_count', 1))
+    if input_count < 1:
+        raise SystemExit('model.input_count must be positive')
+    mean = preprocess.get('mean', [0.0, 0.0, 0.0])
+    std = preprocess.get('std', [1.0, 1.0, 1.0])
+    if mean and isinstance(mean[0], (list, tuple)):
+        mean_values = mean
+    else:
+        mean_values = [mean for _ in range(input_count)]
+    if std and isinstance(std[0], (list, tuple)):
+        std_values = std
+    else:
+        std_values = [std for _ in range(input_count)]
     do_quantization = bool(config.get(
         'do_quantization', should_quantize(head_type)))
     dtype = quant.get('dtype', 'w8a8')
@@ -79,10 +108,10 @@ def conversion_options(config, platform, head_type):
                     name, value, ', '.join(sorted(choices))))
 
     config_kwargs = {
-        'mean_values': [[float(value) * 255.0 for value in
-                         preprocess.get('mean', [0.0, 0.0, 0.0])]],
-        'std_values': [[float(value) * 255.0 for value in
-                        preprocess.get('std', [1.0, 1.0, 1.0])]],
+        'mean_values': [[float(value) * 255.0 for value in values]
+                        for values in mean_values],
+        'std_values': [[float(value) * 255.0 for value in values]
+                       for values in std_values],
         'target_platform': platform,
         'quantized_dtype': dtype,
         'quantized_algorithm': algorithm,

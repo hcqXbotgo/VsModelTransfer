@@ -1,5 +1,6 @@
 model:
-  onnx_model: modes/soccer/model/yolov5n_falcon2_3328_1024_clean_headcut_raw.onnx
+  onnx_model: modes/soccer/model/yolov8n_detect-auxHM-seq-stack-3f_sperson_ball_goal_h3328_w3328_20260825_best_3input.onnx
+  input_count: 3
 
 target_platform: rk3576
 do_quantization: true
@@ -16,8 +17,10 @@ build:
   float_dtype: float16
 
 dataset:
-  root: modes/basketball/datasets/calibration/images
+  root: modes/soccer/datasets/calibration
   sample_count: 14
+  sequence_length: 3
+  frame_step: 1
 
 preprocess:
   mean: [0.0, 0.0, 0.0]

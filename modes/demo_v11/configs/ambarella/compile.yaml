@@ -1,0 +1,15 @@
+project: cv7
+template_dir: /home/falcon2/my_model_build
+adk_path: /opt/cvtools/sample_nn_diag/diags/onnx/yolo_v8_s_ox/../../../../adk
+framework_dir: /home/falcon2/amba/linux/ambalinux_sdk/pkg/ambacv
+model: modes/demo_v11/model/yolo11n_detect_sperson_ball_hoop_ballhoop_h1024_w3328_20260720_best_opset13_fp32_headcut_raw.onnx
+prefer_headcut: true
+network: demo_v11_yolov8
+input:
+  images: modes/basketball/datasets/calibration/images
+  color_format: 1
+  scale: 255.0
+dra:
+  mode: 2
+  options: act-force-fx16,coeff-force-fx16
+output_dir: modes/demo_v11/outputs/compile/ambarella

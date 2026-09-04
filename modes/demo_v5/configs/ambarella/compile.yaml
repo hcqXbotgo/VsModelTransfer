@@ -1,0 +1,15 @@
+project: cv7
+template_dir: /home/falcon2/my_model_build
+adk_path: /opt/cvtools/sample_nn_diag/diags/onnx/yolo_v8_s_ox/../../../../adk
+framework_dir: /home/falcon2/amba/linux/ambalinux_sdk/pkg/ambacv
+model: modes/demo_v5/model/yolov5n_detect_standingperson_ball_board_ballhoop_704_1280_20250707_headcut_raw.onnx
+prefer_headcut: true
+network: demo_v5_yolov5
+input:
+  images: modes/basketball/datasets/calibration/images
+  color_format: 1
+  scale: 255.0
+dra:
+  mode: 2
+  options: act-force-fx16,coeff-force-fx16
+output_dir: modes/demo_v5/outputs/compile/ambarella

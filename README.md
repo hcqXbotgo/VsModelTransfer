@@ -1,8 +1,8 @@
-# Basketball 模型量化与双平台编译端到端运行手册
+# Basketball 模型量化与多平台编译端到端运行手册
 
 本仓库用于把 Basketball YOLO ONNX 模型处理为可量化、可评估，并可部署到
-VS859 或 RK3576 的模型。本文以 `basketball` 当前配置为主线，并在各平台章节中说明
-其他模式的构建方式与差异。完整流程为：
+VS859、RK3576 或安霸 CVFlow 的模型。本文以 `basketball` 当前配置为主线，并在各平台章节中
+说明其他模式的构建方式与差异。完整流程为：
 
 ```text
 准备校准集和评估集
@@ -32,6 +32,9 @@ VS859 或 RK3576 的模型。本文以 `basketball` 当前配置为主线，并�
 ```text
 quant_folder/
 ├── run.sh / run.py                         # 统一命令入口
+├── Html/                                   # 本地浏览器量化工作台
+│   ├── server.py                           # localhost HTTP 服务
+│   └── index.html                           # 配置编辑和任务页面
 ├── env.example.sh                          # 本机环境变量模板
 ├── common/
 │   ├── evaluation/                         # COCO loader、metric、compare 汇总
@@ -54,6 +57,8 @@ quant_folder/
     │   │   ├── eval.yaml                   # 量化模型评估
     │   │   ├── compare.yaml                # 逐层误差比较
     │   │   └── compile.yaml                # MGZ 编译与硬件前处理
+    │   ├── ambarella/
+    │   │   └── compile.yaml                # 安霸 CVFlow/DRA/FlexiBin 配置
     │   └── rk3576/
     │       ├── rknn.yaml                   # RKNN 量化、转换和校准配置
     │       └── eval.yaml                   # RKNN COCO 评估与解码配置
@@ -62,7 +67,8 @@ quant_folder/
         ├── evaluation/                     # AP、可视化、逐层比较
         └── compile/
             ├── vs859/                     # StatlasCompile 生成的 .mgz
-            └── rk3576/                    # RKNN、manifest 和校准列表
+            ├── rk3576/                    # RKNN、manifest 和校准列表
+            └── ambarella/                 # ambapb、FlexiBin 和运行脚本
 ```
 
 源文件与产物要分清：原始 ONNX、图片、COCO JSON 和 YAML 是流程输入；`outputs/` 下的文件是
@@ -77,6 +83,66 @@ quant_folder/
 ```text
 ./run.sh <mode> <operation> [options]
 ```
+
+当目标平台为安霸时，入口会在编译前自动检查 `AMBARELLA_CONTAINER`；如果容器已停止，
+会先执行 `podman start`。容器不存在时不会隐式加载大镜像，而是提示运行 setup。
+
+### 2.2 安霸 CVFlow 平台
+
+安霸转换依赖 CVTools/ADK，当前仓库通过预构建 Podman 容器调用；量化和编译本身不使用
+Statlas 或 RKNN Toolkit。主机侧转换器只需一个能导入 `onnx`、`PyYAML` 的 Python，路径由
+`AMBARELLA_PYTHON` 指定；未设置时才回退到 `STATLAS_PYTHON` 或系统 `python3`。该 Python
+只负责读取模型和生成命令，真正的 CVFlow/DRA 编译在容器内完成。推荐先由环境脚本加载、启动或复用容器，它会把已验证的容器名称写入
+`env.sh`：
+
+```bash
+./setup_conda_envs.sh --ambarella-only
+./run.sh basketball compile --platform ambarella --dry-run
+./run.sh basketball compile --platform ambarella
+```
+
+若容器已经由其他脚本启动，也可以直接设置 `AMBARELLA_CONTAINER` 后运行上述命令。
+调用命令中显式设置的容器名优先于 `env.sh`，例如：
+
+```bash
+AMBARELLA_CONTAINER=container_20260901_180716 \
+  ./run.sh basketball compile --platform ambarella
+```
+
+`AMBARELLA_CONTAINER` 必须是正在运行的容器名；容器需要能看到宿主机的
+`/home/dragonfly/wj_sdk/quant_folder`、`/home/falcon2/my_model_build` 和
+`/home/falcon2/amba/linux/ambalinux_sdk`。每个模式的
+`configs/ambarella/compile.yaml` 指定 ONNX、输入目录、CV7 工程、DRA 模式和输出目录，
+不再从 VS859/RK3576 配置推断。默认流程为：
+
+```text
+ONNX -> graph_surgery(CVFlow) -> prepare.py(CNNGen/DRA) -> Task Composer -> FlexiBin
+```
+
+安霸的 DRA/CNNGen 量化发生在 `prepare.py`，因此以下命令与 `compile` 使用同一条转换链路：
+
+```bash
+./run.sh basketball quant --platform ambarella
+```
+
+生成的 `ambapb.ckpt.onnx`、`flexibin*.bin`、`run*.sh` 和元数据位于
+`modes/<mode>/outputs/compile/ambarella/`。安霸 COCO `eval`、逐层 `compare` 尚未接入统一
+入口，命令会明确提示使用 CVTools 的 ADES/板端脚本；板端产生的预测结果仍可导入现有 COCO
+评估工具。若宿主机未安装 CVTools 且未设置容器名，入口会直接报出启动容器的修复提示。
+
+### 2.3 本地 Web 工作台
+
+如果希望通过浏览器修改配置并启动量化、评估或编译任务，可以在仓库根目录运行：
+
+```bash
+python3 Html/server.py
+```
+
+然后打开 <http://127.0.0.1:8765/>。页面不会展示配置文件内容；可以上传 ONNX 模型，选择模式、平台和多个按顺序执行的操作（例如
+`quant -> compile -> eval`），并查看 `run.sh` 任务的实时日志。上传模型后会自动更新内部
+配置中的模型引用。
+服务只监听本机回环地址；量化仍然使用 `env.sh` 中配置的 Conda 环境和工具链。完整说明见
+`Html/README.md`。
 
 篮球模式固定写作 `basketball`，例如：
 
@@ -93,11 +159,11 @@ quant_folder/
 | `validate` | 检查 VS859 `eval.yaml` 存在并统计校准/评估目录条目数 | 否 |
 | `clean-model` | 使用 Statlas `OnnxConvertTool` 清洗原始 ONNX | 是 |
 | `cut-head` | 裁掉 YOLOv5 或 YOLOv8/11 的主机后处理部分 | 是 |
-| `quant` | 默认做 VS859 PTQ；`--platform rk3576` 量化并生成 RKNN | 是 |
-| `eval` | 默认评估 VS859；`--platform rk3576` 评估 RKNN | 否 |
+| `quant` | 默认做 VS859 PTQ；`--platform rk3576` 量化并生成 RKNN；`--platform ambarella` 执行 CVFlow/DRA | 是 |
+| `eval` | 默认评估 VS859；`--platform rk3576` 评估 RKNN；安霸评估使用 CVTools ADES/板端流程 | 否 |
 | `float-eval` | 用原始 ONNX 做浮点基线评估 | 否 |
 | `compare` | 默认比较 VS859 逐层输出；`--platform rk3576` 运行 RKNN 逐层误差分析 | 否 |
-| `compile` | 默认生成 VS859 `.mgz`；指定平台后生成 RK3576 `.rknn` | 是 |
+| `compile` | 默认生成 VS859 `.mgz`；指定平台后生成 RK3576 `.rknn` 或安霸 FlexiBin | 是 |
 | `clean` | 清理指定范围的生成物 | 删除生成物 |
 | `all` | 顺序执行 `quant + eval + float-eval + VS859 compile` | 是 |
 
@@ -109,7 +175,7 @@ quant_folder/
 ./run.sh basketball compile --platform rk3576 --dry-run
 ```
 
-### 2.2 VS859 环境
+### 2.4 VS859 环境
 
 VS859 的清洗、Statlas PTQ、评估和 MGZ 编译依赖以下变量：
 
@@ -122,7 +188,7 @@ export STATLAS_QUANT=/path/to/conda/env/bin/StatlasQuant
 export STATLAS_COMPILE_DIR=/path/to/VS859_ED_release/tools/NPU/statlas
 ```
 
-### 2.3 RK3576 环境
+### 2.5 RK3576 环境
 
 RK3576 转换只要求 `RKNN_PYTHON` 指向能够导入 `rknn.api` 的 Python：
 
@@ -139,7 +205,7 @@ dependencies/rknn-toolkit2-2.3.2/
 RKNN 环境使用该目录的 Toolkit2 2.3.2 wheel，并固定 `onnx==1.16.2`；更高版本 ONNX
 删除了 Toolkit2 2.3.2 仍会访问的 `onnx.mapping`。
 
-### 2.4 自动创建两套环境
+### 2.6 自动创建环境和安霸容器
 
 环境脚本按仓库内相对路径创建相互独立的 Conda 环境，并更新本机 `env.sh`：
 
@@ -156,6 +222,38 @@ RKNN 环境使用该目录的 Toolkit2 2.3.2 wheel，并固定 `onnx==1.16.2`；
 ./setup_conda_envs.sh --statlas-only
 ./setup_conda_envs.sh --rknn-only
 ```
+
+安霸 CVTools 容器也可以由同一个脚本初始化。为避免普通 Conda 初始化意外加载约 30 GB
+的镜像，容器流程需要显式启用：
+
+```bash
+./setup_conda_envs.sh --ambarella-only
+```
+
+也可以设置 `SETUP_AMBARELLA=1` 后运行普通 setup；默认不启用容器是为了避免无意中加载约
+30 GB 的镜像。
+
+脚本按以下顺序处理：
+
+1. 复用 `env.sh` 或 `~/ContainerName.log` 中仍在运行的容器；已停止的容器会先尝试启动。
+2. 如果找不到可用容器但本地已有安霸镜像，则创建一个新容器。
+3. 如果镜像也不存在，调用 `AmbaContainerPreBuildImageLoader.sh` 导入
+   `AMBARELLA_IMAGE_TAR`，再调用 `RunContainer.sh`，并额外挂载 `/home/falcon2`。
+4. 用 Podman 检查容器确实处于 `running` 状态后，把名称和路径写入 `env.sh` 的 managed block。
+
+默认从仓库内的 `dependencies/amba` 查找安霸容器包，支持把解压后的发布目录直接放在
+`dependencies/amba`，也支持放在其下的一级/多级子目录。镜像压缩包还会自动在
+`dependencies/amba` 和 `dependencies` 根目录查找。可以通过环境变量或选项覆盖：
+
+```bash
+./setup_conda_envs.sh --ambarella-only \
+  --ambarella-dir /path/to/amba-container-bundle \
+  --ambarella-image-tar /path/to/image.tar
+```
+
+`--dry-run` 只打印操作，不会执行 `podman load`、启动容器或修改 `env.sh`。成功后无需手工
+复制容器名；新的终端执行 `./run.sh basketball compile --platform ambarella` 时，`run.sh`
+会加载 `env.sh`，`run.py` 会把已记录的 `AMBARELLA_CONTAINER` 传给转换器。
 
 ## 3. 准备数据
 
@@ -965,7 +1063,7 @@ RKNN 路径使用的是 `configs/rk3576/rknn.yaml:model.onnx_model`。
 | `demo_v26` | YOLO26, 1024 x 3328 | 去头 6 输出（直接 ltrb + class logits） | int8 |
 | `demo_v5` | YOLOv5, 704 x 1280 | 去头 3 输出 | int8 |
 | `demo_v8` | YOLOv8, 960 x 960 | 去头 6 输出 | int8 |
-| `soccer` | YOLOv5, 1024 x 3328 | 清洗后去头 3 输出 | int8 |
+| `soccer` | YOLOv8 auxiliary, 1024 x 3328 | 3 帧 RGB 拼接为 9 通道，输出对应首帧 | int8 |
 
 当前 6 个模式均已成功生成 RKNN。输出目录结构为：
 
@@ -1023,6 +1121,20 @@ modes/<mode>/outputs/evaluation/rk3576/
 当前 `basketball`、`demo_v11`、`demo_v26`、`demo_v5` 和 `demo_v8` 复用篮球 COCO
 评估集。仓库中暂时没有足球专用 COCO 标注，因此 `soccer` 的评估配置也临时使用篮球测试集，
 并只映射 `person` 和 `sports ball` 类；该结果只能用于流程联调，不能作为足球模型正式精度结论。
+
+### 多帧输入模型
+
+数据加载器默认保持原有单帧行为。对需要多帧输入的模型，在自定义 loader 的参数中设置：
+
+| 参数 | 含义 |
+|---|---|
+| `sequence_length` | 每个输入窗口的帧数；`1` 表示普通单帧模型 |
+| `frame_step` | 窗口内相邻帧在排序数据中的间隔 |
+| `sequence_stride` | 相邻窗口起点的间隔 |
+
+每个窗口按时间顺序拼接 RGB 通道，形状为 `[N, 3 * sequence_length, H, W]`；评估时窗口首帧
+的 COCO image id 用于匹配标注，模型输出应针对该首帧。`soccer` 配置只是这一通用接口的一个
+三帧示例，并不限制其他模式使用多帧输入。
 
 ### 9.5 RK3576 逐层量化误差
 
@@ -1115,7 +1227,32 @@ quant -> eval -> float-eval -> compile
 完整原始 ONNX，通常需要 `yolov8_raw`。因此 head-cut 构建不要使用 `all`；应分别运行 `quant`、
 `eval`、上文的 head-cut 浮点基线命令和 `compile`。
 
-## 11. 常见问题
+## 11. 安霸平台流程
+
+安霸 CV7/CV72 使用 CVTools 的 CVFlow backend，不使用 `quant.yaml`、`compile.yaml` 的
+Statlas 字段，也不使用 RKNN Toolkit2。`configs/ambarella/compile.yaml` 是唯一入口配置，
+其中的 `model`、输入目录、`project`、ADK 模板、DRA 模式和输出目录必须互相匹配。
+
+启动容器后执行：
+
+```bash
+export AMBARELLA_CONTAINER=<RunContainer.sh 输出的容器名>
+./run.sh basketball compile --platform ambarella --dry-run
+./run.sh basketball compile --platform ambarella
+```
+
+转换器在容器内依次执行 `graph_surgery(CVFlow)`、`prepare.py`（CNNGen/DRA）和 Task
+Composer，最终把 `ambapb.ckpt.onnx`、`flexibin*.bin`、元数据及运行脚本复制到
+`modes/basketball/outputs/compile/ambarella/`。`quant --platform ambarella` 是同一条
+CVFlow/DRA 编译链路的别名；安霸的 COCO `eval` 和逐层 `compare` 仍应使用 CVTools 的
+ADES/板端工具，统一入口会明确拒绝不兼容的评估请求。
+
+如果出现 `sysflow_convert: No such file or directory`，在容器中将
+`/opt/cvtools/cv72/tv2/exe` 加入 `PATH`；如果出现 `project must be set`，确认
+`PROJECT=cv7` 与 SDK 的芯片配置一致。容器必须能访问量化仓库、`/home/falcon2/my_model_build`
+和 `/home/falcon2/amba/linux/ambalinux_sdk`。
+
+## 12. 常见问题
 
 ### `No raw ONNX found`
 
@@ -1147,7 +1284,7 @@ compare 最差层。不要直接用提高大量层精度掩盖错误的数据路
 重点核对 runtime 输入格式、NV12 色彩范围、stride、预处理 mean/std、head-cut 输出顺序和 host
 解码参数。编译成功只证明图可编译，不证明端到端输入输出语义正确。
 
-## 12. 交付检查清单
+## 13. 交付检查清单
 
 1. `model/` 中本次原始 ONNX 身份明确，清洗和 head-cut 产物可追溯。
 2. 校准集与部署分布一致，且与训练/评估集没有泄漏。
@@ -1162,7 +1299,7 @@ compare 最差层。不要直接用提高大量层精度掩盖错误的数据路
 11. `.mgz` 和 `.rknn` 分别位于 `compile/vs859/` 与 `compile/rk3576/`，没有混用旧根目录产物。
 12. `.mgz` 已在 VS859、`.rknn` 已在 RK3576 目标板完成加载、精度、性能和稳定性验证。
 
-## 13. Git 管理约定
+## 14. Git 管理约定
 
 - 提交代码、配置、文档、COCO 标注，以及团队约定需要版本化的数据清单；
 - 原始 ONNX、量化产物、评估结果、可视化、日志、`.mgz` 和 `.rknn` 通常不提交，可由流程重建；

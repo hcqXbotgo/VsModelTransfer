@@ -1495,8 +1495,15 @@ def demo():
         model.eval()
         # Warmup forward to detect runtime issues (e.g. FP16 ops on CPU)
         with torch.no_grad():
-            _dummy = torch.zeros(1, 3, *img_size)
-            model(_dummy)
+            sequence_length = int(d.get('sequence_length', 1))
+            split_inputs = bool(d.get('split_inputs', False))
+            if split_inputs:
+                _dummy = tuple(torch.zeros(1, 3, *img_size)
+                               for _ in range(sequence_length))
+                model(*_dummy)
+            else:
+                _dummy = torch.zeros(1, 3 * sequence_length, *img_size)
+                model(_dummy)
     except Exception as exc:
         print(f'onnx2torch unusable ({type(exc).__name__}), falling back to onnxruntime')
         import onnxruntime as ort
@@ -1539,14 +1546,30 @@ def demo():
         pr_curve_file=pr_curve_file,
         baseline_predictions_file=baseline_predictions,
         board_predictions_file=board_predictions)
-    img_ids = sorted(evaluator.coco.imgs.keys())
+    all_img_ids = sorted(evaluator.coco.imgs.keys())
+    sequence_length = int(d.get('sequence_length', 1))
+    frame_step = int(d.get('frame_step', 1))
+    sequence_stride = int(d.get('sequence_stride', 1))
+    split_inputs = bool(d.get('split_inputs', False))
+    if sequence_length < 1 or frame_step < 1 or sequence_stride < 1:
+        raise ValueError('sequence_length, frame_step and sequence_stride must be positive')
+    last_start = len(all_img_ids) - 1 - (sequence_length - 1) * frame_step
+    if last_start < 0:
+        raise ValueError('evaluation dataset has too few images for a {}-frame input'.format(
+            sequence_length))
+    # The model predicts the first frame, so each evaluation sample starts at
+    # a valid COCO image and appends subsequent temporal frames.
+    starts = list(range(0, last_start + 1, sequence_stride))
+    img_ids = [all_img_ids[start] for start in starts]
     limits = [value for value in (args.num, configured_num) if value > 0]
     num = min(limits) if limits else len(img_ids)
     num = min(num, len(img_ids))
     if num < len(img_ids):
         import random
         random.seed(42)
-        img_ids = random.sample(img_ids, num)
+        selected = random.sample(range(len(img_ids)), num)
+        img_ids = [img_ids[index] for index in selected]
+        starts = [starts[index] for index in selected]
 
     print(f'Model:  {model_path}')
     print(f'Anns:   {annfile}')
@@ -1559,13 +1582,23 @@ def demo():
 
     for i, img_id in enumerate(img_ids):
         info = evaluator.coco.loadImgs(img_id)[0]
-        img = Image.open(os.path.join(img_dir, info['file_name'])).convert('RGB')
-        w, h = img.size
-
-        inp = transform(img).unsqueeze(0)
+        start = starts[i]
+        sequence_ids = [all_img_ids[start + offset * frame_step]
+                        for offset in range(sequence_length)]
+        frames = []
+        for sequence_id in sequence_ids:
+            sequence_info = evaluator.coco.loadImgs(sequence_id)[0]
+            with Image.open(os.path.join(img_dir, sequence_info['file_name'])) as image:
+                frames.append(transform(image.convert('RGB')))
+        with Image.open(os.path.join(img_dir, info['file_name'])) as image:
+            w, h = image.size
+        if split_inputs:
+            inp = tuple(frame.unsqueeze(0) for frame in frames)
+        else:
+            inp = torch.cat(frames, dim=0).unsqueeze(0)
         if backend == 'torch':
             with torch.no_grad():
-                out = model(inp)
+                out = model(*inp) if split_inputs else model(inp)
             if isinstance(out, (list, tuple)) and len(out) > 1:
                 # multi-output (head-cut) model: keep all outputs as a list
                 out = [o if isinstance(o, torch.Tensor) else o[0]
@@ -1573,8 +1606,13 @@ def demo():
             elif isinstance(out, (list, tuple)):
                 out = out[0]
         else:
-            input_name = sess.get_inputs()[0].name
-            outs = sess.run(None, {input_name: inp.numpy()})
+            if split_inputs:
+                feeds = {item.name: value.numpy()
+                         for item, value in zip(sess.get_inputs(), inp)}
+            else:
+                input_name = sess.get_inputs()[0].name
+                feeds = {input_name: inp.numpy()}
+            outs = sess.run(None, feeds)
             if len(outs) > 1:
                 out = [torch.from_numpy(o) for o in outs]
             else:

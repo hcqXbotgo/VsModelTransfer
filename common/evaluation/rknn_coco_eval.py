@@ -55,19 +55,29 @@ def runtime_arguments(config, target_override=None, device_override=None):
     return arguments
 
 
-def prepare_image(path, input_size, color_order='RGB'):
-    image = cv2.imread(str(path), cv2.IMREAD_COLOR)
-    if image is None:
-        raise ValueError('cannot decode image: {}'.format(path))
-    original_h, original_w = image.shape[:2]
-    if color_order.upper() == 'RGB':
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    elif color_order.upper() != 'BGR':
-        raise ValueError('unsupported color_order {!r}'.format(color_order))
+def prepare_image(path, input_size, color_order='RGB', split_inputs=False):
+    """Prepare one image or an ordered frame window for RKNN inputs."""
+    paths = path if isinstance(path, (list, tuple)) else [path]
+    images = []
+    original_h = original_w = None
+    for index, item in enumerate(paths):
+        image = cv2.imread(str(item), cv2.IMREAD_COLOR)
+        if image is None:
+            raise ValueError('cannot decode image: {}'.format(item))
+        if index == 0:
+            original_h, original_w = image.shape[:2]
+        if color_order.upper() == 'RGB':
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        elif color_order.upper() != 'BGR':
+            raise ValueError('unsupported color_order {!r}'.format(color_order))
+        images.append(image)
     input_h, input_w = input_size
-    image = cv2.resize(image, (input_w, input_h),
-                       interpolation=cv2.INTER_LINEAR)
-    return np.expand_dims(image, axis=0), original_h, original_w
+    images = [cv2.resize(image, (input_w, input_h),
+                         interpolation=cv2.INTER_LINEAR)
+              for image in images]
+    if split_inputs:
+        return [np.expand_dims(image, axis=0) for image in images], original_h, original_w
+    return np.expand_dims(np.concatenate(images, axis=2), axis=0), original_h, original_w
 
 
 def selected_images(coco, limit):
@@ -184,7 +194,22 @@ def evaluate(config_path, workspace, num_override=None,
     coco = COCO(str(annotation_path))
     limit = (num_override if num_override is not None
              else int(dataset.get('num_samples', 0)))
-    images = selected_images(coco, limit)
+    all_images = selected_images(coco, 0)
+    sequence_length = int(dataset.get('sequence_length', 1))
+    frame_step = int(dataset.get('frame_step', 1))
+    sequence_stride = int(dataset.get('sequence_stride', 1))
+    split_inputs = bool(dataset.get('split_inputs', False))
+    if sequence_length < 1 or frame_step < 1 or sequence_stride < 1:
+        raise SystemExit('dataset sequence_length, frame_step and sequence_stride must be positive')
+    last_start = len(all_images) - 1 - (sequence_length - 1) * frame_step
+    if last_start < 0:
+        raise SystemExit('evaluation dataset has too few images for a {}-frame input'.format(
+            sequence_length))
+    starts = list(range(0, last_start + 1, sequence_stride))
+    images = [all_images[start] for start in starts]
+    if limit and limit > 0:
+        images = images[:limit]
+        starts = starts[:limit]
     print('RKNN model: {}'.format(model_path))
     runtime_args = runtime_arguments(config, target_override, device_override)
     print('dataset:    {} image(s)'.format(len(images)))
@@ -195,13 +220,24 @@ def evaluate(config_path, workspace, num_override=None,
         runtime_description = initialize_runtime(
             rknn, config, workspace, runtime_args)
         print('runtime:    {}'.format(runtime_description))
+        all_image_ids = [item[0] for item in all_images]
         for index, (image_id, info) in enumerate(images, 1):
-            image_path = image_dir / info['file_name']
+            start = starts[index - 1]
+            sequence_paths = [
+                image_dir / coco.loadImgs(all_image_ids[start + offset * frame_step])[0]['file_name']
+                for offset in range(sequence_length)
+            ]
             input_data, image_h, image_w = prepare_image(
-                image_path, input_size,
-                dataset.get('color_order', 'RGB'))
+                sequence_paths, input_size,
+                dataset.get('color_order', 'RGB'), split_inputs=split_inputs)
+            if split_inputs:
+                inference_inputs = input_data
+                inference_formats = ['nhwc'] * len(input_data)
+            else:
+                inference_inputs = [input_data]
+                inference_formats = ['nhwc']
             outputs = rknn.inference(
-                inputs=[input_data], data_format=['nhwc'])
+                inputs=inference_inputs, data_format=inference_formats)
             if outputs is None:
                 raise SystemExit('RKNN inference returned no outputs: {}'.format(
                     image_path))

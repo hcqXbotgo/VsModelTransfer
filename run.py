@@ -8,6 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parent
 MODES_ROOT = ROOT / 'modes'
@@ -72,6 +74,9 @@ def quant_command(mode):
     cmd = [quant, '--quant_cfg', config(mode, 'quant')]
     mp_path = (MODES_ROOT / mode / 'configs' / 'vs859' /
                'mixed_precision.yaml')
+    # A mode may opt into mixed-precision overrides by providing this optional
+    # file.  Keep the behavior model/config driven rather than special-casing
+    # a particular sport or input layout.
     if mp_path.exists():
         cmd += ['--qparam_cfg', mp_path]
     return cmd
@@ -123,6 +128,8 @@ PROCESSED_SUFFIXES = (
     '_simplified.onnx',
     '_opset13.onnx',
     '_fp32.onnx',
+    '_rknn.onnx',
+    '_3input.onnx',
 )
 
 
@@ -240,11 +247,37 @@ def float_eval_command(mode):
                'float_visualizations')
     pred_json = (MODES_ROOT / mode / 'outputs' / 'evaluation' /
                  'pre_quant_predictions.json')
-    # The original export is a packed raw YOLO tensor.  Head-cut eval configs
-    # describe the deployment model, so use the raw decoder for float-eval.
-    raw_decode = 'yolov5' if mode in ('demo_v5', 'soccer') else 'yolov8_raw'
+    # Head-cut eval configs describe the deployment model, so float-eval uses
+    # the corresponding raw decoder for the original export.
+    raw_decode = 'yolov5' if 'yolov5' in original_model(mode).name.lower() else 'yolov8_raw'
+    float_model = original_model(mode)
+    # Multi-input evaluation is declared by the dataset configuration.  When
+    # a packed N-channel export has a generated N-input counterpart, use that
+    # graph for float evaluation regardless of the mode or sport name.
+    try:
+        with config(mode, 'eval').open(encoding='utf-8') as stream:
+            eval_cfg = yaml.safe_load(stream) or {}
+        params = eval_cfg.get('dataset', {}).get('eval', {}).get(
+            'parameters', {}) or {}
+        sequence_length = int(params.get('sequence_length', 1) or 1)
+        if bool(params.get('split_inputs', False)) and sequence_length > 1:
+            model_dir = MODES_ROOT / mode / 'model'
+            suffix = '_{}input.onnx'.format(sequence_length)
+            split_models = sorted(
+                path for path in model_dir.glob('*' + suffix)
+                if path.is_file())
+            if len(split_models) == 1:
+                float_model = split_models[0]
+            elif len(split_models) > 1:
+                names = ', '.join(path.name for path in split_models)
+                raise SystemExit(
+                    'Multiple {}-input float models under {}: {}'.format(
+                        sequence_length, model_dir, names))
+    except (OSError, TypeError, ValueError, yaml.YAMLError) as error:
+        raise SystemExit('Invalid eval configuration for {}: {}'.format(
+            mode, error)) from error
     return [python, evaluator, '--config', config(mode, 'eval'),
-            '--model', original_model(mode), '--num', '0',
+            '--model', float_model, '--num', '0',
             '--decode-mode', raw_decode,
             '--vis-dir', vis_dir, '--pred-json', pred_json]
 
@@ -312,9 +345,79 @@ def rknn_compile_command(mode, platform):
              '--workspace', ROOT], output)
 
 
+def ambarella_compile_command(mode):
+    """Build the Ambarella CVFlow/FlexiDAG conversion command."""
+    # Only the host-side ONNX/YAML preparation runs in Python.  The actual
+    # CVFlow/DRA build runs inside the Ambarella container, so do not require
+    # the Statlas toolchain when a dedicated converter Python is configured.
+    python = executable('AMBARELLA_PYTHON',
+                        os.environ.get('STATLAS_PYTHON', DEFAULT_PYTHON),
+                        'python3')
+    python = require(python,
+                     'Python (for Ambarella converter)')
+    script = require(ROOT / 'common' / 'tools' / 'convert_ambarella.py',
+                     'Ambarella conversion helper')
+    cfg = ROOT / 'modes' / mode / 'configs' / 'ambarella' / 'compile.yaml'
+    if not cfg.is_file():
+        raise SystemExit('{} Ambarella compile config not found: {}'.format(
+            mode, cfg))
+    command = [python, script, '--config', cfg, '--mode', mode,
+               '--workspace', ROOT]
+    # setup_conda_envs.sh records the verified running container in env.sh.
+    # Trim copied/logged values so a trailing newline cannot become a Podman
+    # container name that is syntactically valid but impossible to resolve.
+    container = os.environ.get('AMBARELLA_CONTAINER', '').strip()
+    if container:
+        command += ['--container', container]
+    return command
+
+
+def ensure_ambarella_container(container, dry_run=False):
+    """Make sure the configured Ambarella container is running."""
+    container = (container or '').strip()
+    if not container:
+        return
+    if dry_run:
+        return
+    try:
+        inspected = subprocess.run(
+            ['podman', 'container', 'inspect', '--format',
+             '{{.State.Status}}', container],
+            capture_output=True, text=True, check=False)
+    except FileNotFoundError as error:
+        raise SystemExit(
+            'podman is required for Ambarella builds. Install Podman or '
+            'unset AMBARELLA_CONTAINER to use local CVTools.') from error
+    if inspected.returncode != 0:
+        detail = inspected.stderr.strip()
+        raise SystemExit(
+            "Ambarella container '{}' was not found. Run "
+            "./setup_conda_envs.sh --ambarella-only first{}".format(
+                container, ': ' + detail if detail else '.'))
+    state = inspected.stdout.strip()
+    if state == 'running':
+        return
+    if state not in ('created', 'exited', 'paused', 'configured'):
+        raise SystemExit(
+            "Ambarella container '{}' is in unsupported state '{}'.".format(
+                container, state or 'unknown'))
+    show_command(['podman', 'start', container])
+    try:
+        subprocess.run(['podman', 'start', container], cwd=str(ROOT), check=True)
+    except subprocess.CalledProcessError as error:
+        raise SystemExit(
+            "Failed to start Ambarella container '{}' (exit code {}).".format(
+                container, error.returncode)) from error
+
+
 def run_platform_compile(mode, platform, dry_run):
     if platform == 'vs859':
         run_compile(mode, dry_run)
+        return
+    if platform == 'ambarella':
+        container = os.environ.get('AMBARELLA_CONTAINER', '').strip()
+        ensure_ambarella_container(container, dry_run)
+        run_command(ambarella_compile_command(mode), dry_run)
         return
     command, output = rknn_compile_command(mode, platform)
     print('rknn:    {}'.format(output))
@@ -329,6 +432,11 @@ def run_platform_quant(mode, platform, dry_run):
     """
     if platform == 'vs859':
         run_quant(mode, dry_run)
+        return
+    if platform == 'ambarella':
+        # Ambarella performs DRA/CNNGen quantization as part of the CVFlow
+        # build; there is no separate Statlas-style quant command.
+        run_platform_compile(mode, platform, dry_run)
         return
     run_platform_compile(mode, platform, dry_run)
 
@@ -355,6 +463,11 @@ def run_platform_eval(mode, platform, dry_run,
     if platform == 'vs859':
         run_command(eval_command(mode, 'eval', eval_yaml(mode)), dry_run)
         return
+    if platform == 'ambarella':
+        raise SystemExit(
+            'Ambarella COCO eval is not provided by quant_folder. Use the '
+            'generated ADES/board run script and import board predictions for '
+            'the existing evaluation tools.')
     run_command(rknn_eval_command(mode, runtime_target, device_id), dry_run)
 
 
@@ -386,6 +499,10 @@ def run_platform_compare(mode, platform, dry_run, runtime_target=None,
         for command in compare_commands(mode):
             run_command(command, dry_run)
         return
+    if platform == 'ambarella':
+        raise SystemExit(
+            'Ambarella layer comparison is run by the CVTools ADES flow; '
+            'quant_folder does not have a compatible RKNN-style analyzer.')
     run_command(rknn_compare_command(
         mode, runtime_target, device_id, analysis_input), dry_run)
 
@@ -396,6 +513,13 @@ def run_all(mode, dry_run):
     run_command(eval_command(mode), dry_run)
     run_command(float_eval_command(mode), dry_run)
     run_compile(mode, dry_run)
+
+
+def run_platform_all(mode, platform, dry_run):
+    if platform == 'ambarella':
+        run_platform_quant(mode, platform, dry_run)
+        return
+    run_all(mode, dry_run)
 
 
 def validate(mode, dry_run):
@@ -501,7 +625,7 @@ def main():
     parser.add_argument('--list', action='store_true', help='List available modes')
     parser.add_argument('--dry-run', action='store_true', help='Print only')
     parser.add_argument('--platform', default='vs859',
-                        choices=('vs859', 'rk3576'),
+                        choices=('vs859', 'rk3576', 'ambarella'),
                         help='quant/eval/compare/compile target platform')
     parser.add_argument('--runtime-target', choices=('rk3576',),
                         help='RKNN eval/compare target; omit for PC simulator')
@@ -525,6 +649,11 @@ def main():
         run_platform_eval(args.mode, args.platform, args.dry_run,
                           args.runtime_target, args.device_id)
     elif args.operation == 'float-eval':
+        if args.platform == 'ambarella':
+            raise SystemExit(
+                'Ambarella float-eval is provided by the CVTools ADES flow; '
+                'use ./run.sh {} compile --platform ambarella first.'.format(
+                    args.mode))
         run_command(float_eval_command(args.mode), args.dry_run)
     elif args.operation == 'compare':
         run_platform_compare(args.mode, args.platform, args.dry_run,
@@ -543,7 +672,7 @@ def main():
     elif args.operation == 'clean-model':
         clean_model(args.mode, args.dry_run)
     elif args.operation == 'all':
-        run_all(args.mode, args.dry_run)
+        run_platform_all(args.mode, args.platform, args.dry_run)
 
 
 if __name__ == '__main__':

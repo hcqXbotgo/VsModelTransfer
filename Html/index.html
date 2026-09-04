@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Quant Folder</title>
+  <style>
+    :root { color-scheme: dark; --bg:#101419; --panel:#171d24; --line:#2b3642; --text:#e8edf2; --muted:#94a2b1; --accent:#55c2a5; --bad:#ed7777; }
+    * { box-sizing:border-box; } body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif; }
+    header { border-bottom:1px solid var(--line); padding:20px 28px; display:flex; align-items:baseline; gap:14px; } h1 { margin:0; font-size:20px; } header span { color:var(--muted); }
+    main { max-width:1280px; margin:0 auto; padding:22px 28px 36px; } section { background:var(--panel); border:1px solid var(--line); border-radius:6px; overflow:hidden; margin-top:16px; }
+    .toolbar { display:grid; grid-template-columns:1fr 1fr auto; gap:10px; align-items:end; } label { display:grid; gap:6px; color:var(--muted); font-size:12px; }
+    select, button, input { font:inherit; color:var(--text); background:#11171d; border:1px solid var(--line); border-radius:5px; } select, button { min-height:38px; padding:0 12px; } button { cursor:pointer; } button:hover { border-color:var(--accent); } button.primary { background:#194239; border-color:#287b67; }
+    .section-head { display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid var(--line); padding:11px 14px; } h2 { font-size:14px; margin:0; }
+    .body { padding:14px; } .upload { display:flex; flex-wrap:wrap; gap:10px; align-items:center; } input[type=file] { padding:8px; flex:1; min-width:260px; }
+    .pipeline { display:flex; flex-wrap:wrap; gap:8px; } .step { display:flex; align-items:center; gap:7px; min-height:38px; padding:0 10px; border:1px solid var(--line); border-radius:5px; color:var(--text); background:#11171d; cursor:grab; } .step input { accent-color:var(--accent); } .step.dragging { opacity:.45; border-color:var(--accent); }
+    .hint, .meta { color:var(--muted); } .hint { margin:10px 0 0; } .meta { font-size:12px; } .status { padding:10px 14px; border-top:1px solid var(--line); color:var(--muted); min-height:40px; } .status.ok { color:var(--accent); } .status.error { color:var(--bad); }
+    pre { margin:0; min-height:460px; max-height:620px; overflow:auto; padding:16px; white-space:pre-wrap; word-break:break-word; color:#cbd6df; font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace; }
+    @media (max-width:700px) { main { padding:16px; } .toolbar { grid-template-columns:1fr 1fr; } .toolbar button { grid-column:1 / -1; } }
+  </style>
+</head>
+<body>
+  <header><h1>Quant Folder</h1><span>本地模型量化工作台</span></header>
+  <main>
+    <section>
+      <div class="section-head"><h2>模型上传</h2><span class="meta">只接受 ONNX</span></div>
+      <div class="body">
+        <div class="toolbar"><label>目标模式<select id="mode"></select></label><label>目标平台<select id="platform"><option value="vs859">VS859</option><option value="rk3576">RK3576</option><option value="ambarella">Ambarella CVFlow</option></select></label><label>上传文件<input id="model" type="file" accept=".onnx"></label></div>
+        <div class="upload"><label><span><input id="overwrite" type="checkbox"> 允许覆盖同名模型</span></label><button class="primary" id="upload">上传模型并更新内部引用</button></div>
+        <p class="hint">模型保存到 <code>modes/&lt;mode&gt;/model/</code>。配置文件不会在页面中显示；上传后服务端只更新内部模型路径。</p>
+      </div><div class="status" id="upload-status">等待上传</div>
+    </section>
+    <section>
+      <div class="section-head"><h2>操作流水线</h2><span class="meta">拖动步骤可调整顺序</span></div>
+      <div class="body"><div class="pipeline" id="pipeline"></div><p class="hint">例如勾选并排列为：模型清洗 → 检测头裁切 → 量化 → 编译 → 评估。前一步失败后流水线会停止。</p></div>
+      <div class="status"><button class="primary" id="run">执行选中的流水线</button></div>
+    </section>
+    <section>
+      <div class="section-head"><h2>执行日志</h2><span class="meta" id="job-meta">未执行</span></div>
+      <pre id="logs"></pre><div class="status" id="job-status">等待操作</div>
+    </section>
+  </main>
+  <script>
+    const $ = id => document.getElementById(id); let timer = null;
+    const labels = {'clean-model':'模型清洗','cut-head':'检测头裁切','quant':'量化','compile':'编译','eval':'量化模型评估','float-eval':'浮点模型评估','compare':'逐层误差对比','validate':'数据集检查','status':'状态检查','clean':'清理生成物'};
+    async function request(url, options) { const r=await fetch(url,options); const d=await r.json(); if(!r.ok) throw new Error(d.error || r.statusText); return d; }
+    function setUpload(text, kind='') { $('upload-status').textContent=text; $('upload-status').className='status '+kind; }
+    function renderPipeline(operations) { $('pipeline').innerHTML=''; const defaults=['quant','compile','eval']; operations.forEach((op,index)=>{ const label=document.createElement('label'); label.className='step'; label.draggable=true; label.dataset.op=op; label.innerHTML=`<input type="checkbox" ${defaults.includes(op)?'checked':''}> <span>${index+1}. ${labels[op]||op}</span>`; label.addEventListener('dragstart',()=>label.classList.add('dragging')); label.addEventListener('dragend',()=>{label.classList.remove('dragging'); [...$('pipeline').children].forEach((x,i)=>x.querySelector('span').textContent=`${i+1}. ${labels[x.dataset.op]||x.dataset.op}`);}); label.addEventListener('dragover',event=>{event.preventDefault(); const moving=$('pipeline').querySelector('.dragging'); if(moving&&moving!==label){const box=label.getBoundingClientRect(); $('pipeline').insertBefore(moving,event.clientY<box.top+box.height/2?label:label.nextSibling);}}); $('pipeline').appendChild(label); }); }
+    async function init() { const d=await request('/api/modes'); $('mode').innerHTML=d.modes.map(x=>`<option>${x}</option>`).join(''); renderPipeline(d.operations); }
+    async function upload() { const file=$('model').files[0]; if(!file) throw new Error('请选择 ONNX 模型'); const data=new FormData(); data.append('mode',$('mode').value); data.append('overwrite',$('overwrite').checked?'true':'false'); data.append('model',file); setUpload(`上传中 0%（0 / ${(file.size/1048576).toFixed(1)} MiB）`); await new Promise((resolve,reject)=>{ const xhr=new XMLHttpRequest(); xhr.open('POST','/api/upload'); xhr.timeout=30*60*1000; xhr.upload.onprogress=event=>{ if(event.lengthComputable) setUpload(`上传中 ${Math.round(event.loaded/event.total*100)}%（${(event.loaded/1048576).toFixed(1)} / ${(event.total/1048576).toFixed(1)} MiB）`); }; xhr.onerror=()=>reject(new Error('上传连接失败')); xhr.ontimeout=()=>reject(new Error('上传超时')); xhr.onload=()=>{ try { const d=JSON.parse(xhr.responseText); if(xhr.status<200||xhr.status>=300) throw new Error(d.error||`HTTP ${xhr.status}`); setUpload(`已上传 ${d.model}；已同步内部模型引用（${d.updated_config_count} 项）`,'ok'); resolve(); } catch(error) { reject(error); } }; xhr.send(data); }); }
+    async function run() { const operations=[...$('pipeline').children].filter(x=>x.querySelector('input').checked).map(x=>x.dataset.op); if(!operations.length) throw new Error('至少选择一个操作'); if(timer) clearInterval(timer); $('logs').textContent=''; $('job-status').textContent='启动中...'; const d=await request('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:$('mode').value,platform:$('platform').value,operations})}); $('job-meta').textContent=`${d.mode} / ${d.platform} / ${d.operations.join(' -> ')}`; poll(d.id); }
+    async function poll(id) { const update=async()=>{try{const d=await request('/api/jobs/'+id); $('logs').textContent=d.logs; $('logs').scrollTop=$('logs').scrollHeight; $('job-status').textContent=d.status+(d.current_operation?` / ${labels[d.current_operation]||d.current_operation}`:'')+(d.returncode===null?'':` (exit ${d.returncode})`); if(d.status!=='running'){clearInterval(timer); timer=null;}}catch(e){$('job-status').textContent=e.message; clearInterval(timer);}}; await update(); timer=setInterval(update,1000); }
+    $('upload').onclick=()=>upload().catch(e=>setUpload(e.message,'error')); $('run').onclick=()=>run().catch(e=>$('job-status').textContent=e.message); init().catch(e=>setUpload(e.message,'error'));
+  </script>
+</body>
+</html>

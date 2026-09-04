@@ -1,0 +1,15 @@
+project: cv7
+template_dir: /home/falcon2/my_model_build
+adk_path: /opt/cvtools/sample_nn_diag/diags/onnx/yolo_v8_s_ox/../../../../adk
+framework_dir: /home/falcon2/amba/linux/ambalinux_sdk/pkg/ambacv
+model: modes/soccer/model/yolov8n_detect-auxHM-seq-stack-3f_sperson_ball_goal_h3328_w3328_20260825_best_headcut_raw.onnx
+prefer_headcut: true
+network: soccer_yolov8_seq
+input:
+  images: modes/soccer/datasets/calibration
+  color_format: 1
+  scale: 255.0
+dra:
+  mode: 2
+  options: act-force-fx16,coeff-force-fx16
+output_dir: modes/soccer/outputs/compile/ambarella

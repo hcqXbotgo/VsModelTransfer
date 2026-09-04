@@ -14,18 +14,17 @@ dataset:
   input_size: [1024, 3328]
   color_order: RGB
   num_samples: 0
+  sequence_length: 3
+  frame_step: 1
+  sequence_stride: 1
+  split_inputs: true
 
 decode:
-  mode: yolov5_headcut
+  mode: yolov8_headcut
   conf_threshold: 0.001
   iou_threshold: 0.3
-  anchors:
-    - [10, 13, 16, 30, 33, 23]
-    - [30, 61, 62, 45, 59, 119]
-    - [116, 90, 156, 198, 373, 326]
-  # This model exposes 80 COCO classes; only person and sports ball are
-  # comparable with the currently available Basketball annotations.
-  class_map: {0: 1, 32: 2}
+  # The temporary basketball annotations compare person and ball only.
+  class_map: {0: 1, 1: 2}
 
 output:
   result_file: modes/soccer/outputs/evaluation/rk3576/metric_result.csv

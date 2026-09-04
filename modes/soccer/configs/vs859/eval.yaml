@@ -1,6 +1,8 @@
+cfg_version: 0.3
+
 model:
-  onnx_model: modes/soccer/outputs/quant/yolov5n_falcon2_3328_1024_clean_deploy_model.onnx
-  quant_param: modes/soccer/outputs/quant/yolov5n_falcon2_3328_1024_clean_quant_param.yaml
+  onnx_model: modes/soccer/outputs/quant/yolov8n_detect-auxHM-seq-stack-3f_sperson_ball_goal_h3328_w3328_20260825_best_3input_deploy_model.onnx
+  quant_param: modes/soccer/outputs/quant/yolov8n_detect-auxHM-seq-stack-3f_sperson_ball_goal_h3328_w3328_20260825_best_3input_quant_param.yaml
 
 work_mode: Metric
 
@@ -8,6 +10,8 @@ dataset:
   eval:
     type: Custom
     loader: common/evaluation/coco_loader.py
+    source: common/evaluation/coco_loader.py
+    target: statlasquant_eval_dataloader
     parameters:
       ann_file: modes/soccer/datasets/evaluation/annotations/instances.json
       img_dir: modes/soccer/datasets/evaluation/images
@@ -17,7 +21,11 @@ dataset:
       crop_size: [1024, 3328]
       num_samples: 0
       batch_size: 1
-      num_workers: 4
+      num_workers: 0
+      sequence_length: 3
+      frame_step: 1
+      sequence_stride: 1
+      split_inputs: true
 
 metric:
   type: extern_python
@@ -25,7 +33,7 @@ metric:
   parameters:
     annfile: modes/soccer/datasets/evaluation/annotations/instances.json
     img_size: [1024, 3328]
-    decode_mode: yolov5
+    decode_mode: yolov8_raw
     conf_threshold: 0.001
     iou_threshold: 0.3
     img_dir: modes/soccer/datasets/evaluation/images

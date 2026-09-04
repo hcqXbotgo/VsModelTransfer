@@ -1,6 +1,6 @@
 model:
-  onnx_model: modes/soccer/outputs/quant/yolov5n_falcon2_3328_1024_clean_deploy_model.onnx
-  quant_param: modes/soccer/outputs/quant/yolov5n_falcon2_3328_1024_clean_quant_param.yaml
+  onnx_model: modes/soccer/outputs/quant/yolov8n_detect-auxHM-seq-stack-3f_sperson_ball_goal_h3328_w3328_20260825_best_3input_deploy_model.onnx
+  quant_param: modes/soccer/outputs/quant/yolov8n_detect-auxHM-seq-stack-3f_sperson_ball_goal_h3328_w3328_20260825_best_3input_quant_param.yaml
 
 work_mode: Compare
 
