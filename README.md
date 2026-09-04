@@ -263,6 +263,19 @@ RKNN 环境使用该目录的 Toolkit2 2.3.2 wheel，并固定 `onnx==1.16.2`；
 复制容器名；新的终端执行 `./run.sh basketball compile --platform ambarella` 时，`run.sh`
 会加载 `env.sh`，`run.py` 会把已记录的 `AMBARELLA_CONTAINER` 传给转换器。
 
+### 安霸编译稀疏度
+
+安霸 CVFlow 的 simple pruning 通过 `configs/ambarella/compile.yaml` 的顶层
+`model_prune` 指定，范围为 `0.0` 到 `1.0`。例如：
+
+```yaml
+model_prune: 0.5
+```
+
+转换器会将其传给 ADK 的 `USR_MODEL_PRUNE=0.5`。该值表示参与 pruning 的权重比例，
+不是 INT8/UINT8 量化参数，也不会自动生成稀疏模型；最终是否能够获得硬件收益取决于
+CVFlow 版本、网络层类型和目标芯片。未配置或设为 `null` 时不启用 pruning。
+
 ## 3. 准备数据
 
 ### 3.1 新增校准集

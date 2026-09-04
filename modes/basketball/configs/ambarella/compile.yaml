@@ -6,6 +6,9 @@ framework_dir: /home/falcon2/amba/linux/ambalinux_sdk/pkg/ambacv
 model: modes/basketball/model/yolov8n_detect_sperson_ball_hoop_ballhoop_h3328_w3328_20260818_best.onnx
 prefer_headcut: true
 network: basketball_yolov8
+# Optional Ambarella simple-pruning ratio.  Uncomment to prune this fraction
+# of eligible weights during CVFlow compilation (0.0 to 1.0).
+# model_prune: 0.5
 input:
   images: modes/basketball/datasets/calibration/images
   sample_count: 20
