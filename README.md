@@ -276,6 +276,19 @@ model_prune: 0.5
 不是 INT8/UINT8 量化参数，也不会自动生成稀疏模型；最终是否能够获得硬件收益取决于
 CVFlow 版本、网络层类型和目标芯片。未配置或设为 `null` 时不启用 pruning。
 
+安霸主输出的 DRAM pitch 对齐由 `output.dram_pitch_alignment` 控制：
+
+```yaml
+output:
+  dram_pitch_alignment: 1
+```
+
+转换器会将其传给 `USR_TEST_FORCE_OUT_DPA`。可选值为 `0`（自动，CV7/CV7x 默认按
+128 字节对齐）、`1`（连续，仅保留 word alignment）、`2`（32 字节对齐）和 `3`
+（64 字节对齐）。需要输出连续、不保留行尾 padding 时使用 `1`；不配置该字段则交由
+ADK 默认选择。安霸要求每个主输出对应一个值；配置为单个整数时，转换器会自动复制到
+所有输出，也可以写成等长列表为不同输出指定不同的对齐方式。
+
 ## 3. 准备数据
 
 ### 3.1 新增校准集

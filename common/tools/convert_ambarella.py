@@ -308,6 +308,26 @@ def convert(config_path, mode, workspace, output_dir, container=None, dry_run=Fa
             raise SystemExit(
                 "Ambarella model_prune must be between 0 and 1; got {} in {}"
                 .format(model_prune, config_path))
+    output_cfg = config.get("output", {}) or {}
+    output_dpa = output_cfg.get("dram_pitch_alignment", None)
+    if output_dpa is not None:
+        # ADK expects one DPA value for every primary output.  A scalar is a
+        # convenient shorthand for applying the same alignment to all outputs;
+        # an explicit list is also accepted for per-output control.
+        if isinstance(output_dpa, (list, tuple)):
+            output_dpa = [int(value) for value in output_dpa]
+        else:
+            output_dpa = [int(output_dpa)] * len(output_names)
+        if len(output_dpa) != len(output_names):
+            raise SystemExit(
+                "Ambarella output.dram_pitch_alignment must contain one "
+                "value per output ({} expected, {} got) in {}"
+                .format(len(output_names), len(output_dpa), config_path))
+        if any(value not in (0, 1, 2, 3) for value in output_dpa):
+            raise SystemExit(
+                "Ambarella output.dram_pitch_alignment values must be 0 "
+                "(auto), 1 (contiguous), 2 (32-byte), or 3 (64-byte); got {} "
+                "in {}".format(output_dpa, config_path))
     io_cfg = config.get("io", {}) or {}
     io_mode = int(io_cfg.get("mode", 2))
     if io_mode not in (0, 1, 2, 3):
@@ -421,6 +441,9 @@ def convert(config_path, mode, workspace, output_dir, container=None, dry_run=Fa
     ]
     if model_prune is not None:
         make_vars.append("USR_MODEL_PRUNE={}".format(model_prune))
+    if output_dpa is not None:
+        make_vars.append("USR_TEST_FORCE_OUT_DPA={}".format(
+            " ".join(str(value) for value in output_dpa)))
     if not use_adk_descriptor:
         make_vars.append("USR_CVB_JSON_FILE={}".format(descriptor))
     if io_mode == 1:

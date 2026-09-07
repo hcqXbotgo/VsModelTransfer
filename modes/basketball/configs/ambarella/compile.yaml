@@ -32,4 +32,8 @@ dra:
 io:
   # CV7/CVAPI v7 supports plain (2) and picinfo (1), not recv-raw (0).
   mode: 1
+# Primary-output DRAM pitch alignment: 0=auto (CV7 defaults to 128-byte),
+# 1=contiguous/word-aligned, 2=32-byte aligned, 3=64-byte aligned.
+output:
+  dram_pitch_alignment: 1
 output_dir: modes/basketball/outputs/compile/ambarella
