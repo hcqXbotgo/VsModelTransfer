@@ -19,6 +19,8 @@ _CALLER_AMBARELLA_TAR_SET="${AMBARELLA_IMAGE_TAR+x}"
 _CALLER_AMBARELLA_TAR="${AMBARELLA_IMAGE_TAR-}"
 _CALLER_AMBARELLA_IMAGE_SET="${AMBARELLA_IMAGE+x}"
 _CALLER_AMBARELLA_IMAGE="${AMBARELLA_IMAGE-}"
+_CALLER_AMBARELLA_MOUNT_SET="${AMBARELLA_MOUNT_DIR+x}"
+_CALLER_AMBARELLA_MOUNT="${AMBARELLA_MOUNT_DIR-}"
 
 # Reuse values from the local environment file when this script is invoked
 # directly (rather than after ``source env.sh``).  env.sh is a local, user-
@@ -39,6 +41,7 @@ fi
 [[ -z "${_CALLER_AMBARELLA_LOADER_SET}" ]] || AMBARELLA_IMAGE_LOADER="${_CALLER_AMBARELLA_LOADER}"
 [[ -z "${_CALLER_AMBARELLA_TAR_SET}" ]] || AMBARELLA_IMAGE_TAR="${_CALLER_AMBARELLA_TAR}"
 [[ -z "${_CALLER_AMBARELLA_IMAGE_SET}" ]] || AMBARELLA_IMAGE="${_CALLER_AMBARELLA_IMAGE}"
+[[ -z "${_CALLER_AMBARELLA_MOUNT_SET}" ]] || AMBARELLA_MOUNT_DIR="${_CALLER_AMBARELLA_MOUNT}"
 
 # When only the bundle directory is overridden, derive its companion scripts
 # and archive unless the caller supplied those paths explicitly.
@@ -97,6 +100,7 @@ AMBARELLA_IMAGE="${AMBARELLA_IMAGE:-ambacontainer_2404_cuda12.9_cudnn/sdk_onnx:3
 AMBARELLA_PYTHON="${AMBARELLA_PYTHON:-${STATLAS_PYTHON:-python3}}"
 AMBARELLA_CONTAINER="${AMBARELLA_CONTAINER:-}"
 AMBARELLA_CONTAINER="$(printf '%s' "${AMBARELLA_CONTAINER}" | tr -d '\r\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+AMBARELLA_MOUNT_DIR="${AMBARELLA_MOUNT_DIR:-}"
 
 DRY_RUN=0
 INSTALL_STATLAS=1
@@ -122,6 +126,8 @@ Options:
   --ambarella-dir PATH CVTools container bundle directory
   --ambarella-image-tar PATH
                        Container image archive used when the image is absent
+  --ambarella-mount-dir PATH
+                       Additional host directory to bind at the same path inside a new container
   --env-root PATH      Environment parent directory (default: dependencies/conda-envs)
   --dry-run            Print commands without creating environments or env.sh
   -h, --help           Show this help
@@ -135,7 +141,7 @@ Environment overrides:
   SETUP_AMBARELLA=1     Enable Ambarella setup without a command-line flag
   AMBARELLA_CONTAINER_DIR, AMBARELLA_RUN_SCRIPT,
   AMBARELLA_IMAGE_LOADER, AMBARELLA_IMAGE_TAR, AMBARELLA_IMAGE,
-  AMBARELLA_PYTHON
+  AMBARELLA_PYTHON, AMBARELLA_MOUNT_DIR
 EOF
 }
 
@@ -174,6 +180,11 @@ while (($#)); do
             [[ $# -ge 2 ]] || { echo "--ambarella-image-tar requires a path" >&2; exit 2; }
             AMBARELLA_IMAGE_TAR="$(realpath -m "$2")"
             AMBARELLA_IMAGE_TAR_CLI=1
+            shift
+            ;;
+        --ambarella-mount-dir)
+            [[ $# -ge 2 ]] || { echo "--ambarella-mount-dir requires a path" >&2; exit 2; }
+            AMBARELLA_MOUNT_DIR="$(realpath -m "$2")"
             shift
             ;;
         --env-root)
@@ -338,6 +349,14 @@ use_ambarella_container() {
 }
 
 ensure_ambarella() {
+    local -a mount_dirs=("${ROOT}")
+    if [[ -n "${AMBARELLA_MOUNT_DIR}" && "${AMBARELLA_MOUNT_DIR}" != "${ROOT}" ]]; then
+        [[ -d "${AMBARELLA_MOUNT_DIR}" ]] || {
+            echo "Ambarella mount directory does not exist: ${AMBARELLA_MOUNT_DIR}" >&2
+            exit 1
+        }
+        mount_dirs+=("${AMBARELLA_MOUNT_DIR}")
+    fi
     if ((DRY_RUN == 1)); then
         echo "Ambarella container setup (dry-run):"
         echo "  bundle: ${AMBARELLA_CONTAINER_DIR}"
@@ -346,7 +365,7 @@ ensure_ambarella() {
             echo "  reuse:  ${AMBARELLA_CONTAINER}"
         else
             echo "  would load ${AMBARELLA_IMAGE_TAR} if the image is absent"
-            echo "  would run ${AMBARELLA_RUN_SCRIPT} ${ROOT} /home/falcon2"
+            echo "  would run ${AMBARELLA_RUN_SCRIPT} ${mount_dirs[*]}"
         fi
         return 0
     fi
@@ -418,11 +437,13 @@ ensure_ambarella() {
 
     local launch_log launch_status launched
     launch_log="$(mktemp "${ROOT}/.ambarella-container.XXXXXX")"
-    echo "+ (cd ${AMBARELLA_CONTAINER_DIR} && ${AMBARELLA_RUN_SCRIPT} ${ROOT} /home/falcon2)"
+    printf '+ (cd %q && %q' "${AMBARELLA_CONTAINER_DIR}" "${AMBARELLA_RUN_SCRIPT}"
+    printf ' %q' "${mount_dirs[@]}"
+    printf ')\n'
     set +e
     (
         cd "${AMBARELLA_CONTAINER_DIR}" &&
-        "${AMBARELLA_RUN_SCRIPT}" "${ROOT}" "/home/falcon2"
+        "${AMBARELLA_RUN_SCRIPT}" "${mount_dirs[@]}"
     ) 2>&1 | tee "${launch_log}"
     launch_status="${PIPESTATUS[0]}"
     set -e
@@ -479,6 +500,7 @@ write_env_file() {
         printf 'export AMBARELLA_IMAGE_TAR=%q\n' "${AMBARELLA_IMAGE_TAR}"
         printf 'export AMBARELLA_IMAGE=%q\n' "${AMBARELLA_IMAGE}"
         printf 'export AMBARELLA_PYTHON=%q\n' "${AMBARELLA_PYTHON}"
+        printf 'export AMBARELLA_MOUNT_DIR=%q\n' "${AMBARELLA_MOUNT_DIR}"
         printf '%s\n' "${end}"
     } >> "${temp}"
     mv "${temp}" "${ENV_FILE}"

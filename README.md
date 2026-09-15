@@ -238,7 +238,8 @@ RKNN 环境使用该目录的 Toolkit2 2.3.2 wheel，并固定 `onnx==1.16.2`；
 1. 复用 `env.sh` 或 `~/ContainerName.log` 中仍在运行的容器；已停止的容器会先尝试启动。
 2. 如果找不到可用容器但本地已有安霸镜像，则创建一个新容器。
 3. 如果镜像也不存在，调用 `AmbaContainerPreBuildImageLoader.sh` 导入
-   `AMBARELLA_IMAGE_TAR`，再调用 `RunContainer.sh`，并额外挂载 `/home/falcon2`。
+   `AMBARELLA_IMAGE_TAR`，再调用 `RunContainer.sh`。新容器会挂载仓库目录；
+   厂商脚本也会挂载宿主机的 `$HOME`。需要其他目录时显式指定。
 4. 用 Podman 检查容器确实处于 `running` 状态后，把名称和路径写入 `env.sh` 的 managed block。
 
 安霸容器准备采用二选一方式：
@@ -258,6 +259,18 @@ RKNN 环境使用该目录的 Toolkit2 2.3.2 wheel，并固定 `onnx==1.16.2`；
   --ambarella-dir /path/to/amba-container-bundle \
   --ambarella-image-tar /path/to/image.tar
 ```
+
+额外挂载目录不再写死，可用 `--ambarella-mount-dir PATH` 或环境变量
+`AMBARELLA_MOUNT_DIR` 指定。该目录必须在宿主机存在，会同路径映射进新容器。例如当前
+编译配置仍引用 `/home/falcon2/amba/...` 和 `/home/falcon2/my_model_build` 时：
+
+```bash
+./setup_conda_envs.sh --ambarella-only --ambarella-mount-dir /home/falcon2
+```
+
+若这些文件位于其他地方，需要挂载实际目录并调整 `compile.yaml` 中的
+`framework_dir`、`template_dir` 等路径。复用已有容器不会改变其挂载；改动挂载目录
+只对新建容器生效。
 
 `--dry-run` 只打印操作，不会执行 `podman load`、启动容器或修改 `env.sh`。成功后无需手工
 复制容器名；新的终端执行 `./run.sh basketball compile --platform ambarella` 时，`run.sh`

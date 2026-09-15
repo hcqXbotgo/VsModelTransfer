@@ -29,7 +29,8 @@ For input ``/path/to/test``, this creates ``/path/to/evaluation/images`` and
 ``/path/to/evaluation/annotations/instances.json`` next to the input directory.
 The input may contain ``images/`` and ``labels/`` subdirectories, or
 image/label pairs in the same directory. Class names are read from a nearby
-``data.yaml`` when available; otherwise ``class_0``, ``class_1``, ... are used.
+``classes.txt`` or ``data.yaml`` when available; otherwise ``class_0``,
+``class_1``, ... are used.
 
 Advanced/legacy usage:
     python yolo_to_coco.py \
@@ -121,9 +122,28 @@ def _names_from_data_yaml(input_dir):
     return None
 
 
+def _names_from_classes_txt(input_dir):
+    """Read one class name per line from a nearby classes.txt file."""
+    candidates = (input_dir / 'classes.txt', input_dir.parent / 'classes.txt')
+    for path in candidates:
+        if not path.is_file():
+            continue
+        try:
+            names = [line.strip() for line in path.read_text(encoding='utf-8').splitlines()
+                     if line.strip()]
+        except OSError:
+            continue
+        if names:
+            return names
+    return None
+
+
 def _infer_names(images, labels_dir, configured_names, dataset_dir):
     if configured_names:
         return configured_names
+    names = _names_from_classes_txt(dataset_dir)
+    if names is None:
+        names = _names_from_data_yaml(dataset_dir)
     class_ids = set()
     for image_path in images:
         label_path = labels_dir / (image_path.stem + '.txt')
@@ -138,12 +158,14 @@ def _infer_names(images, labels_dir, configured_names, dataset_dir):
                     sys.exit('error: invalid class id in {}: {!r}'.format(
                         label_path, line))
     if not class_ids:
-        sys.exit('error: cannot infer classes: no labeled objects found')
+        if names is not None:
+            return names
+        sys.exit('error: cannot infer classes: no labeled objects found '
+                 '(provide --names or classes.txt)')
     max_class_id = max(class_ids)
-    names = _names_from_data_yaml(dataset_dir)
     if names is not None:
         if len(names) <= max_class_id:
-            sys.exit('error: data.yaml has {} names but labels use class id {}'.format(
+            sys.exit('error: class list has {} names but labels use class id {}'.format(
                 len(names), max_class_id))
         return names
     return ['class_{}'.format(index) for index in range(max_class_id + 1)]
@@ -207,7 +229,8 @@ def main():
         # copy image
         dst_img = args.img_out / img_path.name
         if not args.no_copy:
-            shutil.copy2(img_path, dst_img)
+            if img_path.resolve() != dst_img.resolve():
+                shutil.copy2(img_path, dst_img)
 
         # real dimensions from the pixel data (eval scales preds by these)
         with Image.open(img_path) as im:

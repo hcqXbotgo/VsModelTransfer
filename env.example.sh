@@ -40,6 +40,9 @@ export AMBARELLA_IMAGE_TAR="/path/to/quant_folder/dependencies/amba/ambacontaine
 # export AMBARELLA_RUN_SCRIPT="${AMBARELLA_CONTAINER_DIR}/RunContainer.sh"
 # export AMBARELLA_IMAGE_LOADER="${AMBARELLA_CONTAINER_DIR}/AmbaContainerPreBuildImageLoader.sh"
 # export AMBARELLA_IMAGE="ambacontainer_2404_cuda12.9_cudnn/sdk_onnx:3.9.1.0"
+# Optional additional host directory mounted at the same path in a new
+# container. The launcher also mounts the host HOME and setup mounts the repo.
+# export AMBARELLA_MOUNT_DIR="/path/to/ambarella-sdk"
 # Optional: override the ADK project template or CVTools paths used inside the
 # container. The default template is /home/falcon2/my_model_build.
 # export AMBARELLA_TEMPLATE_DIR="/home/falcon2/my_model_build"
