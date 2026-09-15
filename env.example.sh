@@ -44,6 +44,6 @@ export AMBARELLA_IMAGE_TAR="/path/to/quant_folder/dependencies/amba/ambacontaine
 # container. The launcher also mounts the host HOME and setup mounts the repo.
 # export AMBARELLA_MOUNT_DIR="/path/to/ambarella-sdk"
 # Optional: override the ADK project template or CVTools paths used inside the
-# container. The default template is /home/falcon2/my_model_build.
-# export AMBARELLA_TEMPLATE_DIR="/home/falcon2/my_model_build"
+# container. The default is "auto": create Makefiles in the mode's workdir.
+# export AMBARELLA_TEMPLATE_DIR="/path/to/ambarella-project"
 # export AMBARELLA_ADK_PATH="/opt/cvtools/sample_nn_diag/diags/onnx/yolo_v8_s_ox/../../../../adk"

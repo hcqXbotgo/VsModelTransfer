@@ -1,5 +1,5 @@
 project: cv7
-template_dir: /home/falcon2/my_model_build
+template_dir: auto  # Generate the Makefile in outputs/compile/ambarella/work.
 adk_path: /opt/cvtools/sample_nn_diag/diags/onnx/yolo_v8_s_ox/../../../../adk
 framework_dir: /home/falcon2/amba/linux/ambalinux_sdk/pkg/ambacv
 model: modes/soccer/model/yolov8n_detect-auxHM-seq-stack-3f_sperson_ball_goal_h3328_w3328_20260825_best_headcut_raw.onnx

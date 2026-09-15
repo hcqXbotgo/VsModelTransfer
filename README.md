@@ -109,9 +109,9 @@ AMBARELLA_CONTAINER=container_20260901_180716 \
   ./run.sh basketball compile --platform ambarella
 ```
 
-`AMBARELLA_CONTAINER` 必须是正在运行的容器名；容器需要能看到宿主机的
-`/home/dragonfly/wj_sdk/quant_folder`、`/home/falcon2/my_model_build` 和
-`/home/falcon2/amba/linux/ambalinux_sdk`。每个模式的
+`AMBARELLA_CONTAINER` 必须是正在运行的容器名；容器需要能看到实际仓库目录，以及
+配置中的 `framework_dir`。`template_dir: auto` 会使用容器内的 ADK 示例生成工程，
+不需要挂载额外的模板目录。每个模式的
 `configs/ambarella/compile.yaml` 指定 ONNX、输入目录、CV7 工程、DRA 模式和输出目录，
 不再从 VS859/RK3576 配置推断。默认流程为：
 
@@ -261,16 +261,25 @@ RKNN 环境使用该目录的 Toolkit2 2.3.2 wheel，并固定 `onnx==1.16.2`；
 ```
 
 额外挂载目录不再写死，可用 `--ambarella-mount-dir PATH` 或环境变量
-`AMBARELLA_MOUNT_DIR` 指定。该目录必须在宿主机存在，会同路径映射进新容器。例如当前
-编译配置仍引用 `/home/falcon2/amba/...` 和 `/home/falcon2/my_model_build` 时：
+`AMBARELLA_MOUNT_DIR` 指定。该目录必须在宿主机存在，会同路径映射进新容器。例如
+当前编译配置的 `framework_dir` 仍引用 `/home/falcon2/amba/...` 时：
 
 ```bash
 ./setup_conda_envs.sh --ambarella-only --ambarella-mount-dir /home/falcon2
 ```
 
-若这些文件位于其他地方，需要挂载实际目录并调整 `compile.yaml` 中的
-`framework_dir`、`template_dir` 等路径。复用已有容器不会改变其挂载；改动挂载目录
+若框架位于其他地方，需要挂载实际目录并调整 `compile.yaml` 中的 `framework_dir`。
+复用已有容器不会改变其挂载；改动挂载目录
 只对新建容器生效。
+
+安霸转换器默认使用 `template_dir: auto`，从容器内 `/opt/cvtools/sample_nn_diag` 的
+ADK 示例初始化编译工程，并移除示例的 Y/UV 双输入默认项，由实际 ONNX 输入和配置
+指定编译参数。生成的 Makefile 位于
+`modes/<mode>/outputs/compile/ambarella/work/Makefile`；同目录还会生成
+`Makefile.command`、`Makefile.internal_cfg` 和 `Makefile.combo`。每次编译会重新创建
+该 `work` 目录。若需使用自定义工程，可以通过 `compile.yaml` 的 `template_dir` 或
+`AMBARELLA_TEMPLATE_DIR` 指定宿主机模板目录；路径不存在会报错。
+`framework_dir` 是独立依赖，仍须确保容器内能访问。
 
 `--dry-run` 只打印操作，不会执行 `podman load`、启动容器或修改 `env.sh`。成功后无需手工
 复制容器名；新的终端执行 `./run.sh basketball compile --platform ambarella` 时，`run.sh`
@@ -1296,8 +1305,9 @@ ADES/板端工具，统一入口会明确拒绝不兼容的评估请求。
 
 如果出现 `sysflow_convert: No such file or directory`，在容器中将
 `/opt/cvtools/cv72/tv2/exe` 加入 `PATH`；如果出现 `project must be set`，确认
-`PROJECT=cv7` 与 SDK 的芯片配置一致。容器必须能访问量化仓库、`/home/falcon2/my_model_build`
-和 `/home/falcon2/amba/linux/ambalinux_sdk`。
+`PROJECT=cv7` 与 SDK 的芯片配置一致。容器必须能访问量化仓库和当前
+`compile.yaml` 的 `framework_dir`；默认从容器的 ADK 示例在当前模式的 `work` 目录
+生成 Makefile。
 
 ## 12. 常见问题
 

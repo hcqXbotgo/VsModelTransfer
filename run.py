@@ -23,6 +23,10 @@ DEFAULT_COMPILER_ROOT = (
 def executable(env_name, fallback, command_name=None):
     configured = os.environ.get(env_name)
     if configured:
+        if Path(configured).name == configured:
+            found = shutil.which(configured)
+            if found:
+                return Path(found)
         return Path(configured)
     if Path(fallback).exists():
         return Path(fallback)

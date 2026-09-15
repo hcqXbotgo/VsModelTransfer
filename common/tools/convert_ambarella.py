@@ -14,6 +14,7 @@ performed by ``prepare.py`` as part of the CVFlow build.
 import argparse
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -24,6 +25,7 @@ import yaml
 
 
 IMAGE_SUFFIXES = {".bmp", ".jpeg", ".jpg", ".png"}
+ADK_SAMPLE_PROJECT = "/opt/cvtools/sample_nn_diag/diags/onnx/yolo_v8_s_ox"
 
 
 def _root_from_config(config_path):
@@ -203,6 +205,64 @@ def _copy_template(template, workdir, dry_run):
         ".git", "out", "eval", "test_images"))
 
 
+def _bootstrap_template_from_container(container, workdir, adk, project, dry_run):
+    """Generate a configured ADK project from the example in CVTools."""
+    print("Ambarella template: generating from container example", ADK_SAMPLE_PROJECT)
+    if dry_run:
+        return
+    if workdir.exists():
+        shutil.rmtree(workdir)
+    workdir.mkdir(parents=True)
+    env = {"PROJECT": str(project)}
+    command = _container_command(container, [
+        "cp", "-a", ADK_SAMPLE_PROJECT + "/.", str(workdir)], workdir, env)
+    _require_running_container(container)
+    _run(command)
+
+    makefile = workdir / "Makefile.in"
+    if not makefile.is_file():
+        raise SystemExit("Ambarella example did not provide Makefile.in: {}"
+                         .format(ADK_SAMPLE_PROJECT))
+    # configure.ac reads the ADK directory from Makefile.in.  The vendor
+    # example's relative path stops working when copied into a mode workdir.
+    relative_adk = os.path.relpath(str(adk), str(workdir))
+    source = makefile.read_text(encoding="utf-8")
+    source, count = re.subn(
+        r"(?m)^(USR_ADK_PATH\s*=\s*).*$",
+        lambda match: match.group(1) + "@srcdir@/" + relative_adk,
+        source, count=1)
+    if count != 1:
+        raise SystemExit("Ambarella example has no USR_ADK_PATH in Makefile.in")
+    # The bundled example declares two Y/UV test inputs with += and a
+    # preproc.json for those inputs. ADK reads dimensions from that JSON even
+    # when make overrides the layer names and dimensions on the command line.
+    # Its bundled CVFlow descriptor also refers to old sample image lists;
+    # leave it empty so ADK generates one for the configured ONNX and YUV flag.
+    input_fields = (
+        "USR_TEST_INPUT_DRA_DIR", "USR_TEST_INPUT_LAYER", "USR_TEST_INPUT_DIR",
+        "USR_TEST_INPUT_CF", "USR_TEST_INPUT_DIM", "USR_TEST_OUT_LAYER",
+        "USR_JSON_PREPOST_PROC_FILE", "USR_CVB_JSON_FILE")
+    for field in input_fields:
+        source, count = re.subn(
+            r"(?m)^({}\s*)(\+?=)[^\n]*\n?".format(field),
+            lambda match: (match.group(1) + "=\n")
+            if match.group(2) == "=" else "",
+            source)
+        if count == 0:
+            raise SystemExit("Ambarella example has no {} in Makefile.in"
+                             .format(field))
+    makefile.write_text(source, encoding="utf-8")
+
+    command = _container_command(container, ["bash", "-lc",
+        "autoconf && ./configure"], workdir, env)
+    _run(command)
+    for name in ("Makefile", "Makefile.command", "Makefile.internal_cfg",
+                 "Makefile.combo"):
+        if not (workdir / name).is_file():
+            raise SystemExit("Ambarella template generation did not create {}"
+                             .format(workdir / name))
+
+
 def _sample_calibration_images(dataset, workdir, input_cfg, dry_run):
     images = sorted(path for path in dataset.iterdir()
                     if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES)
@@ -287,13 +347,16 @@ def convert(config_path, mode, workspace, output_dir, container=None, dry_run=Fa
     requested_output = _resolve(root, output_dir or config.get(
         "output_dir", "modes/{}/outputs/compile/ambarella".format(mode)))
     template_value = os.environ.get(
-        "AMBARELLA_TEMPLATE_DIR", config.get(
-            "template_dir", "/home/falcon2/my_model_build"))
-    template = Path(template_value)
+        "AMBARELLA_TEMPLATE_DIR", config.get("template_dir", "auto"))
+    template = (None if not template_value or str(template_value).lower() == "auto"
+                else _resolve(root, template_value))
     adk = os.environ.get("AMBARELLA_ADK_PATH", config.get(
         "adk_path", "/opt/cvtools/sample_nn_diag/diags/onnx/yolo_v8_s_ox/../../../../adk"))
-    framework = config.get(
-        "framework_dir", "/home/falcon2/amba/linux/ambalinux_sdk/pkg/ambacv")
+    framework = config.get("framework_dir")
+    if not framework:
+        raise SystemExit(
+            "Ambarella framework_dir is required in compile.yaml; set it "
+            "to the CVAPI framework path accessible inside the container.")
     dra = config.get("dra", {}) or {}
     dra_mode = int(dra.get("mode", 2))
     if dra_mode not in (1, 2, 3):
@@ -370,7 +433,15 @@ def convert(config_path, mode, workspace, output_dir, container=None, dry_run=Fa
             "(for example container_20260901_180716), or install CVTools "
             "locally.")
 
-    _copy_template(template, workdir, dry_run)
+    if template is None and container:
+        _bootstrap_template_from_container(
+            container, workdir, adk, config.get("project", "cv7"), dry_run)
+    elif template is None:
+        raise SystemExit(
+            "Ambarella template_dir=auto requires a container. Set "
+            "AMBARELLA_CONTAINER or specify a local template_dir.")
+    else:
+        _copy_template(template, workdir, dry_run)
     calibration_dataset = _sample_calibration_images(
         dataset, workdir, input_cfg, dry_run)
     if not dry_run:
