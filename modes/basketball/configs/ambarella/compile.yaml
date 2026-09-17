@@ -2,7 +2,7 @@
 project: cv7
 template_dir: auto  # Generate the Makefile in outputs/compile/ambarella/work.
 adk_path: /opt/cvtools/sample_nn_diag/diags/onnx/yolo_v8_s_ox/../../../../adk
-framework_dir: /home/falcon2/amba/linux/ambalinux_sdk/pkg/ambacv
+framework_dir: dependencies/ambacv
 model: modes/basketball/model/yolov8n_detect_sperson_ball_hoop_ballhoop_h3328_w3328_20260818_best.onnx
 prefer_headcut: true
 network: basketball_yolov8

@@ -357,6 +357,12 @@ def convert(config_path, mode, workspace, output_dir, container=None, dry_run=Fa
         raise SystemExit(
             "Ambarella framework_dir is required in compile.yaml; set it "
             "to the CVAPI framework path accessible inside the container.")
+    framework = _resolve(root, framework)
+    if not framework.is_dir():
+        raise SystemExit(
+            "Ambarella framework_dir not found on the host: {}. Place the "
+            "CVAPI framework there and mount the repository into the "
+            "container at the same path.".format(framework))
     dra = config.get("dra", {}) or {}
     dra_mode = int(dra.get("mode", 2))
     if dra_mode not in (1, 2, 3):
