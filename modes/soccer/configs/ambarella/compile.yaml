@@ -11,7 +11,12 @@ input:
   color_format: 1
   scale: 255.0
 dra:
+  # mode: 2 = DRA v2, 3 = DRA v3.
   mode: 2
+  # Comma-separated options: v2 supports type=histo/minmax and coverage
+  # thresholds; v3 supports slope_psnr_end. Precision can be forced with
+  # act-force-* / coeff-force-* (fx8/fx16/fp16). Forced formats disable the
+  # coverage threshold options.
   options: act-force-fx8,coeff-force-fx8
 # The sequence model has three independent image tensors. PICINFO describes one
 # image pyramid, so keep tensor input mode while sharing basketball's FX8 policy.

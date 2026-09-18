@@ -15,7 +15,13 @@ input:
   roi_x: 9999
   roi_y: 9999
 dra:
+  # mode: 2 = DRA v2, 3 = DRA v3.
   mode: 2
+  # Use comma-separated options. DRA v2 supports type=histo/minmax and
+  # coverage_th/coverage_recover_th; DRA v3 supports slope_psnr_end.
+  # Precision can be forced with act-force-* and coeff-force-* (fx8/fx16/fp16)
+  # or relaxed with act-allow-fp16 and coeff-allow-fp16. Coverage options do
+  # not apply when activation/coefficient precision is forced.
   options: act-force-fx8,coeff-force-fx8
 io:
   mode: 1

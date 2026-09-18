@@ -15,7 +15,11 @@ input:
   roi_x: 9999
   roi_y: 9999
 dra:
+  # mode: 2 = DRA v2, 3 = DRA v3.
   mode: 2
+  # Comma-separated options: v2 supports type=histo/minmax and coverage
+  # thresholds; v3 supports slope_psnr_end. act-force-* / coeff-force-* can
+  # force fx8, fx16, or fp16. Coverage thresholds are ignored when forced.
   options: act-force-fx8,coeff-force-fx8
 io:
   mode: 1

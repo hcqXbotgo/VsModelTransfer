@@ -15,7 +15,11 @@ input:
   roi_x: 9999
   roi_y: 9999
 dra:
+  # mode: 2 = DRA v2, 3 = DRA v3.
   mode: 2
+  # Comma-separated DRA options. v2: type=histo/minmax,
+  # coverage_th/coverage_recover_th. v3: slope_psnr_end. Data formats may be
+  # forced with act-force-* and coeff-force-* (fx8/fx16/fp16).
   options: act-force-fx8,coeff-force-fx8
 io:
   mode: 1

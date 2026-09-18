@@ -22,8 +22,18 @@ input:
   roi_x: 9999
   roi_y: 9999
 dra:
-  # Match the known-good basketball model's 8-bit DRA configuration.
+  # Dynamic range analysis (DRA) configuration used by Ambarella CVFlow.
+  # mode: 2 = DRA v2, 3 = DRA v3. The default is 2.
   mode: 2
+  # DRA v2 options: type=histo (default) or type=minmax, for example:
+  #   type=histo,coverage_th=0.9,coverage_recover_th=0.0
+  # DRA v3 option example:
+  #   slope_psnr_end=30
+  # Data-format options can force activation/coefficient precision:
+  #   act-force-fx8, act-force-fx16, act-force-fp16, act-allow-fp16
+  #   coeff-force-fx8, coeff-force-fx16, coeff-force-fp16, coeff-allow-fp16
+  # The current policy forces both activation and coefficient to FX8.
+  # coverage_th/coverage_recover_th do not apply when act/coeff is forced.
   options: act-force-fx8,coeff-force-fx8
 # FlexiDAG I/O interface mode written to the generated model metadata:
 # 0=raw/RECV_RAW, 1=picinfo/PIC_INFO, 2=plain tensor, 3=header v3.
