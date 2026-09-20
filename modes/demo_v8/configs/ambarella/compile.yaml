@@ -11,6 +11,13 @@ input:
   color_format: 1
   scale: 255.0
   yuv420: true
+  # Compile dynamic NV12 resize and YOLO into one FlexiBin. PicInfo provides
+  # each frame's actual dimensions; these values only bound accepted input.
+  hardware_resize:
+    enabled: true
+    dynamic: true
+    max_width: 4096
+    max_height: 2160
   roi_scale: 0
   roi_x: 9999
   roi_y: 9999

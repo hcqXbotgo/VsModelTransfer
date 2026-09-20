@@ -1306,6 +1306,27 @@ Composer，最终把 `ambapb.ckpt.onnx`、`flexibin*.bin`、元数据及运行�
 CVFlow/DRA 编译链路的别名；安霸的 COCO `eval` 和逐层 `compare` 仍应使用 CVTools 的
 ADES/板端工具，统一入口会明确拒绝不兼容的评估请求。
 
+PicInfo 模型可在 `input` 下启用动态 NV12 硬件缩放：
+
+```yaml
+input:
+  yuv420: true
+  hardware_resize:
+    enabled: true
+    dynamic: true
+    max_width: 4096
+    max_height: 2160
+io:
+  mode: 1
+```
+
+转换器会把 Y/UV resize、NV12 到 RGB、归一化和网络编入同一个 FlexiBin。这里的
+`max_width`/`max_height` 只决定编译时资源上限，不是固定输入尺寸；每帧实际尺寸和
+可选 ROI 由 PicInfo 提供，并在 CVTask 中生成 VP resize 参数。实际 NV12 宽高、ROI
+起点和 ROI 宽高都必须为偶数，且不能超过该上限。网络逻辑尺寸仍取 ONNX 输入形状，
+例如源帧 `3328x1024` 或 `3600x1440` 都可由同一个 FlexiBin 缩放到 `960x960` 后执行
+YOLO，不需要按视频尺寸重复转换模型。
+
 如果出现 `sysflow_convert: No such file or directory`，在容器中将
 `/opt/cvtools/cv72/tv2/exe` 加入 `PATH`；如果出现 `project must be set`，确认
 `PROJECT=cv7` 与 SDK 的芯片配置一致。容器必须能访问量化仓库和当前

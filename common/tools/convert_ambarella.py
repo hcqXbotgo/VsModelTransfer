@@ -17,6 +17,7 @@ import os
 import re
 import shlex
 import shutil
+import struct
 import subprocess
 import sys
 from pathlib import Path
@@ -314,6 +315,461 @@ def _descriptor(path, network, inputs, outputs, dra_mode, dra_options):
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
+def _yuv_resize_descriptor(path, network, input_name, outputs, source_size,
+                           model_size, scale, dra_mode, dra_options):
+    """Describe NV12 resize, color conversion, and the network as one graph."""
+    source_width, source_height = source_size
+    model_width, model_height = model_size
+    source_y = input_name + "_y"
+    source_uv = input_name + "_uv"
+    resized_y = input_name + "_resized_y"
+    resized_uv = input_name + "_resized_uv"
+    rgb = input_name + "_RGB"
+    scale_name = input_name + "_data_scale"
+
+    data = {
+        input_name + "_y_resize": {
+            "type": "SGL::Resize",
+            "begin": {
+                source_y: {
+                    "shape": [1, 1, source_height, source_width],
+                    "dtype": "0,0,0,0",
+                    "dram_format": 0,
+                },
+            },
+            "end": {resized_y: {}},
+            "attr": {"h": model_height, "w": model_width},
+        },
+        input_name + "_uv_resize": {
+            "type": "SGL::Resize",
+            "begin": {
+                source_uv: {
+                    "shape": [1, 2, source_height // 2, source_width // 2],
+                    "dtype": "0,0,0,0",
+                    "dram_format": 1,
+                    "file_dram_format": 1,
+                },
+            },
+            "end": {resized_uv: {}},
+            "attr": {"h": model_height // 2, "w": model_width // 2},
+        },
+        input_name + "_cc_node": {
+            "type": "SGL.E::ColorConvert",
+            "begin": {
+                resized_y: {
+                    "shape": [1, 1, model_height, model_width],
+                    "dtype": "0,0,0,0",
+                },
+                resized_uv: {
+                    "shape": [1, 2, model_height // 2, model_width // 2],
+                    "dtype": "0,0,0,0",
+                },
+            },
+            "end": {rgb: {}},
+            "attr": {
+                "code": "yuv420_to_rgb_nv12",
+                "data_format": "0,0,0,0",
+            },
+        },
+        input_name + "_scale_node": {
+            "type": "SGL::Div",
+            "begin": {
+                rgb: {},
+                scale_name: {
+                    "shape": [1, 1, 1, 1],
+                    "init": [float(scale)],
+                    "dtype": "1,2,0,7",
+                },
+            },
+            "end": {input_name: {}},
+        },
+        network: {
+            "type": "VP",
+            "begin": {input_name: {}},
+            "end": {
+                name: {"channels_last": False}
+                for name in outputs
+            },
+            "attr": {
+                "cnngen_flags": "-dra mode={} -c {} ".format(
+                    dra_mode, dra_options),
+                "vas_flags": "-auto",
+            },
+        },
+    }
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
+def _replace_once(source, old, new, description):
+    count = source.count(old)
+    if count != 1:
+        raise SystemExit(
+            "Ambarella dynamic resize expected one {}, found {}".format(
+                description, count))
+    return source.replace(old, new, 1)
+
+
+def _patch_dynamic_resize_vas(path, input_name, model_size):
+    """Replace CNNGen's fixed SGL resize with runtime-controlled VP resize."""
+    model_width, model_height = model_size
+    source_y = input_name + "_y"
+    source_uv = input_name + "_uv"
+    resized_y = input_name + "_resized_y"
+    resized_uv = input_name + "_resized_uv"
+    dzoom_y = input_name + "_dzoom_y"
+    dzoom_uv = input_name + "_dzoom_uv"
+    source = path.read_text(encoding="utf-8")
+    if ("VP_variableresamp({}, {}".format(source_y, dzoom_y) in source and
+            "VP_variableresamp({}, {}".format(source_uv, dzoom_uv) in source):
+        return
+
+    first_resamp = source.index("    VP_resamp({}".format(source_y))
+    source = source[:first_resamp] + (
+        "    VP_input({}, uint32_t, vector(1, 1, 1, 4));\n\n".format(
+            dzoom_y)) + source[first_resamp:]
+    second_resamp = source.index("    VP_resamp({}".format(source_uv))
+    source = source[:second_resamp] + (
+        "    VP_input({}, uint32_t, vector(1, 1, 1, 4));\n\n".format(
+            dzoom_uv)) + source[second_resamp:]
+
+    def replace_resamp(text, image, dzoom, output, out_width, out_height):
+        pattern = re.compile(
+            r"    VP_resamp\(" + re.escape(image) +
+            r",\s*\n.*?\n\s*\);", re.DOTALL)
+        replacement = (
+            "    VP_variableresamp({image}, {dzoom},\n"
+            "              VP_tensor({output}, u8(0), "
+            "vector(1, {channels}, {height}, {width}), __sparsity = 0.00),\n"
+            "              replicate_w = false,\n"
+            "              replicate_h = false,\n"
+            "              resamp_mode = 0,\n"
+            "              out_w = {width},\n"
+            "              out_h = {height}\n"
+            "             );"
+        ).format(image=image, dzoom=dzoom, output=output,
+                 channels=1 if image == source_y else 2,
+                 width=out_width, height=out_height)
+        text, count = pattern.subn(replacement, text, count=1)
+        if count != 1:
+            raise SystemExit(
+                "Ambarella dynamic resize could not find VP_resamp({}) in {}"
+                .format(image, path))
+        return text
+
+    source = replace_resamp(
+        source, source_y, dzoom_y, resized_y, model_width, model_height)
+    source = replace_resamp(
+        source, source_uv, dzoom_uv, resized_uv,
+        model_width // 2, model_height // 2)
+    path.write_text(source, encoding="utf-8")
+
+
+def _patch_dynamic_resize_cvtask(c_path, h_path, task_name, model_size,
+                                 max_size):
+    """Make the generated PicInfo task derive resize parameters per frame."""
+    model_width, model_height = model_size
+    max_width, max_height = max_size
+    header = h_path.read_text(encoding="utf-8")
+    if "    uint32_t roi_width;" not in header:
+        header = _replace_once(
+            header,
+            "    uint32_t dpitch_m1_img_uv;\n\n    uint32_t source_vin;",
+            "    uint32_t dpitch_m1_img_uv;\n"
+            "    uint32_t roi_width;\n"
+            "    uint32_t roi_height;\n\n"
+            "    uint32_t source_vin;",
+            "img_ctx pitch fields")
+    h_path.write_text(header, encoding="utf-8")
+
+    source = c_path.read_text(encoding="utf-8")
+    if "    uint32_t dzoom_y[32]" not in source:
+        source = _replace_once(
+            source,
+            "struct DRAM_temporary_scratchpad {{\n"
+            "    {0}_dram_t {1}_dram;\n"
+            "}};".format(task_name, task_name),
+            "struct DRAM_temporary_scratchpad {{\n"
+            "    uint32_t dzoom_y[32];\n"
+            "    uint32_t dzoom_uv[32];\n"
+            "    {0}_dram_t {1}_dram;\n"
+            "}};".format(task_name, task_name),
+            "DRAM scratchpad declaration")
+    if "    uint32_t dzoom[4];" not in source:
+        source = _replace_once(
+            source,
+            "    amba_roi_config_t p_cfg_msg;\n};",
+            "    amba_roi_config_t p_cfg_msg;\n"
+            "    uint32_t dzoom[4];\n};",
+            "CMEM scratchpad declaration")
+    feedback_desc = re.compile(
+        r"    \.num_feedback = 2,\n"
+        r"    \.feedback\[0\] = \{\n.*?"
+        r"    \.feedback\[1\] = \{\n.*?\n    \},\n",
+        re.DOTALL)
+    source, feedback_count = feedback_desc.subn(
+        "    .num_feedback = 0,\n", source, count=1)
+    if feedback_count != 1 and "    .num_feedback = 0," not in source:
+        raise SystemExit(
+            "Ambarella dynamic resize could not internalize feedback ports in {}"
+            .format(c_path))
+
+    feedback_start = source.index("    // Feedback buffers")
+    feedback_end = source.index("    // Output buffers", feedback_start)
+    dynamic_block = """    // Runtime resize parameters use VP 19.13 phase increments. Both
+    // NV12 planes use the same ratio because UV is half-sized in both axes.
+    cmem->dzoom[0] = (cmem->img_ctx.roi_width << 13) / {model_width}U;
+    cmem->dzoom[1] = (cmem->img_ctx.roi_height << 13) / {model_height}U;
+    cmem->dzoom[2] = 0U;
+    cmem->dzoom[3] = 0U;
+    status = vishw_dma_cmem_to_dxofsaddr(
+        status,
+        pCVTaskEnv->DRAM_temporary_scratchpad_dxaddr,
+        visorc_offsetof(struct DRAM_temporary_scratchpad, dzoom_y),
+        cmem->dzoom,
+        sizeof(cmem->dzoom)
+    );
+    status = vishw_dma_cmem_to_dxofsaddr(
+        status,
+        pCVTaskEnv->DRAM_temporary_scratchpad_dxaddr,
+        visorc_offsetof(struct DRAM_temporary_scratchpad, dzoom_uv),
+        cmem->dzoom,
+        sizeof(cmem->dzoom)
+    );
+    if (is_err(status)) {{
+        P_DEBUG(cis_id, "   > Error: dynamic resize parameter DMA failed (%u).\\n",
+                status, 0);
+        return ERRCODE_GENERIC;
+    }}
+    {task_name}_r_args->images_dzoom_y_dxaddr =
+        pCVTaskEnv->DRAM_temporary_scratchpad_dxaddr;
+    {task_name}_r_args->images_dzoom_y_dxofs =
+        visorc_offsetof(struct DRAM_temporary_scratchpad, dzoom_y);
+    {task_name}_r_args->images_dzoom_uv_dxaddr =
+        pCVTaskEnv->DRAM_temporary_scratchpad_dxaddr;
+    {task_name}_r_args->images_dzoom_uv_dxofs =
+        visorc_offsetof(struct DRAM_temporary_scratchpad, dzoom_uv);
+
+""".format(task_name=task_name, model_width=model_width,
+           model_height=model_height)
+    if "Runtime resize parameters use VP 19.13" not in source:
+        source = source[:feedback_start] + dynamic_block + source[feedback_end:]
+
+    roi_pattern = re.compile(
+        r"static errcode_enum_t " + re.escape(task_name) +
+        r"_roi_handling\(\n.*?\n}\n\nstatic errcode_enum_t " +
+        re.escape(task_name) + r"_picinfo_store", re.DOTALL)
+    roi_function = """static errcode_enum_t {task_name}_roi_handling(
+    img_ctx_t     *img_ctx,
+    cv_pic_info_t *pic_info
+) {{
+    uint32_t roi_w, roi_h, luma, chroma, pitch;
+    int32_t roi_start_col, roi_start_row;
+    uint32_t p_scale = img_ctx->idsp_pyramid_scale;
+
+    roi_w = pic_info->pyramid.half_octave[p_scale].roi_width_m1 + 1U;
+    roi_h = pic_info->pyramid.half_octave[p_scale].roi_height_m1 + 1U;
+    roi_start_col = pic_info->pyramid.half_octave[p_scale].roi_start_col;
+    roi_start_row = pic_info->pyramid.half_octave[p_scale].roi_start_row;
+    pitch = pic_info->pyramid.half_octave[p_scale].ctrl.roi_pitch;
+    if ((roi_w < 2U) || (roi_h < 2U) ||
+        (roi_w > {max_width}U) || (roi_h > {max_height}U) ||
+        ((roi_w & 1U) != 0U) || ((roi_h & 1U) != 0U) ||
+        (roi_start_col < 0) || (roi_start_row < 0) ||
+        ((roi_start_col & 1) != 0) || ((roi_start_row & 1) != 0) ||
+        (pitch < (roi_w + (uint32_t)roi_start_col))) {{
+        cvtask_printf(LVL_CRITICAL,
+            "dynamic resize invalid ROI %ux%u start=(%d,%d) pitch=%u\\n",
+            roi_w, roi_h, roi_start_col, roi_start_row, pitch);
+        return ERRCODE_BAD_PARAMETER;
+    }}
+
+    if (img_ctx->source_vin == 1U) {{
+        luma = pic_info->rpLumaLeft[p_scale];
+        chroma = pic_info->rpChromaLeft[p_scale];
+    }} else {{
+        luma = pic_info->rpLumaRight[p_scale];
+        chroma = pic_info->rpChromaRight[p_scale];
+    }}
+    img_ctx->daddr_img_y_base_dxofs += luma;
+    img_ctx->daddr_img_y_base_dxofs += (uint32_t)roi_start_row * pitch;
+    img_ctx->daddr_img_y_base_dxofs += (uint32_t)roi_start_col;
+    img_ctx->daddr_img_uv_base_dxofs += chroma;
+    img_ctx->daddr_img_uv_base_dxofs += (uint32_t)roi_start_row * pitch / 2U;
+    img_ctx->daddr_img_uv_base_dxofs += (uint32_t)roi_start_col;
+    img_ctx->dpitch_m1_img_y = pitch - 1U;
+    img_ctx->dpitch_m1_img_uv = pitch - 1U;
+    img_ctx->roi_width = roi_w;
+    img_ctx->roi_height = roi_h;
+    cvtask_printf(LVL_DEBUG,
+        "dynamic resize PicInfo ROI %ux%u start=(%d,%d) pitch=%u\\n",
+        roi_w, roi_h, roi_start_col, roi_start_row, pitch);
+    return ERRCODE_NONE;
+}}
+
+static errcode_enum_t {task_name}_picinfo_store""".format(
+        task_name=task_name, max_width=max_width, max_height=max_height)
+    if "dynamic resize invalid ROI" not in source:
+        source, count = roi_pattern.subn(lambda _match: roi_function,
+                                         source, count=1)
+        if count != 1:
+            raise SystemExit(
+                "Ambarella dynamic resize could not patch PicInfo ROI handling in {}"
+                .format(c_path))
+    c_path.write_text(source, encoding="utf-8")
+
+
+def _patch_picinfo_logical_metadata(path, model_size):
+    """Expose the post-resize model shape while retaining max input capacity."""
+    model_width, model_height = model_size
+    data = bytearray(path.read_bytes())
+    # cvflow_flexidag_metadata_t starts with version/mode, then the input
+    # count and 128 fixed-size cvflow_md_buffer_info_t records (48 bytes each).
+    if len(data) < 108:
+        raise SystemExit("Ambarella IO metadata is truncated: {}".format(path))
+    _version, mode, input_count = struct.unpack_from("<3I", data, 0)
+    if mode != 1 or input_count < 2:
+        raise SystemExit(
+            "Ambarella dynamic resize requires PicInfo Y/UV metadata in {}"
+            .format(path))
+    input_info_offset = 12
+    input_info_size = 48
+    y_dims = list(struct.unpack_from("<5I", data, input_info_offset))
+    uv_offset = input_info_offset + input_info_size
+    uv_dims = list(struct.unpack_from("<5I", data, uv_offset))
+    y_dims[3:5] = [model_height, model_width]
+    uv_dims[3:5] = [model_height // 2, model_width // 2]
+    struct.pack_into("<5I", data, input_info_offset, *y_dims)
+    struct.pack_into("<5I", data, uv_offset, *uv_dims)
+    path.write_bytes(data)
+
+
+def _patch_metadata_info_json(path, input_name, model_size, max_size):
+    if not path.is_file():
+        return
+    model_width, model_height = model_size
+    max_width, max_height = max_size
+    data = json.loads(path.read_text(encoding="utf-8"))
+    inputs = data.get("input", {})
+    y_info = inputs.get(input_name + "_y")
+    uv_info = inputs.get(input_name + "_uv")
+    if not isinstance(y_info, dict) or not isinstance(uv_info, dict):
+        raise SystemExit(
+            "Ambarella metadata_info.json has no dynamic resize Y/UV inputs: {}"
+            .format(path))
+    y_info["dim"] = "1,1,1,{},{}".format(model_height, model_width)
+    y_info["max_dim"] = "1,1,1,{},{}".format(max_height, max_width)
+    uv_info["dim"] = "1,1,2,{},{}".format(
+        model_height // 2, model_width // 2)
+    uv_info["max_dim"] = "1,1,2,{},{}".format(
+        max_height // 2, max_width // 2)
+    path.write_text(json.dumps(data, indent=4) + "\n", encoding="utf-8")
+
+
+def _enable_dynamic_hardware_resize(workdir, network, input_name, model_size,
+                                    max_size, container, env):
+    """Regenerate and package one FlexiDAG with per-frame NV12 resizing."""
+    frag_root = (workdir / "out" / "prepare" / "cnngen_out" / network /
+                 "frag-out")
+    metanodes = sorted(path for path in frag_root.iterdir()
+                       if path.is_dir() and path.name.endswith("_prim_nvp0"))
+    if len(metanodes) != 1:
+        raise SystemExit(
+            "Ambarella dynamic resize requires exactly one NVP metanode; "
+            "found {} under {}".format(len(metanodes), frag_root))
+    source_node = metanodes[0]
+    vas_path = source_node / (source_node.name + ".vas")
+    _patch_dynamic_resize_vas(vas_path, input_name, model_size)
+
+    vas_command = ["vas", vas_path.name, "-auto", "-nvp"]
+    command = (_container_command(container, vas_command, source_node, env)
+               if container else vas_command)
+    _run(command, cwd=None if container else source_node,
+         env=None if container else env)
+
+    deploy_node = (workdir / "input" / "deploy_input" / "metanodes" /
+                   source_node.name)
+    vas_output = source_node / "vas_output"
+    runtime_suffixes = {".dagbin", ".ddi", ".dvi", ".h", ".summary",
+                        ".vdg", ".vlist"}
+    for generated in vas_output.iterdir():
+        if generated.is_file() and generated.suffix in runtime_suffixes:
+            shutil.copy2(generated, deploy_node / generated.name)
+
+    deploy_dir = workdir / "out" / "deploy"
+    task_dir = deploy_dir / "cvtasks" / "task_0"
+    autogen_script = deploy_dir / "autogen_cmd.sh"
+    command = shlex.split(autogen_script.read_text(encoding="utf-8"))
+    if task_dir.exists():
+        shutil.rmtree(task_dir)
+    feedback_dir = deploy_dir / "dynamic_resize_feedback"
+    feedback_dir.mkdir(parents=True, exist_ok=True)
+    initial = struct.pack("<4I", 1 << 13, 1 << 13, 0, 0)
+    y_init = feedback_dir / "dzoom_y.bin"
+    uv_init = feedback_dir / "dzoom_uv.bin"
+    y_init.write_bytes(initial)
+    uv_init.write_bytes(initial)
+    command.extend([
+        "--feedbacktasks", input_name + "_dzoom_y=DYNAMIC_RESIZE_Y",
+        "--feedbacktasks", input_name + "_dzoom_uv=DYNAMIC_RESIZE_UV",
+        "--feedbackinit", "DYNAMIC_RESIZE_Y=0:{}".format(y_init),
+        "--feedbackinit", "DYNAMIC_RESIZE_UV=0:{}".format(uv_init),
+    ])
+    wrapped = (_container_command(container, command, workdir, env)
+               if container else command)
+    _run(wrapped, cwd=None if container else workdir,
+         env=None if container else env)
+
+    _patch_dynamic_resize_cvtask(
+        task_dir / "task_0_cvtask.c", task_dir / "task_0_cvtask.h",
+        "task_0", model_size, max_size)
+    task_manifest = task_dir / "task_0_cvtask.mnft"
+    manifest_lines = task_manifest.read_text(encoding="utf-8").splitlines()
+    task_manifest.write_text(
+        "\n".join(line for line in manifest_lines
+                  if "DYNAMIC_RESIZE_" not in line) + "\n",
+        encoding="utf-8")
+    metadata_paths = [
+        workdir / "input" / "deploy_io_metadata.bin",
+        deploy_dir / "build_input" / "metadata" / "deploy_io_metadata.bin",
+    ]
+    for metadata_path in metadata_paths:
+        if not metadata_path.is_file():
+            raise SystemExit(
+                "Ambarella IO metadata not found: {}".format(metadata_path))
+        _patch_picinfo_logical_metadata(metadata_path, model_size)
+    _patch_metadata_info_json(
+        workdir / "input" / "metadata_info.json", input_name,
+        model_size, max_size)
+    build_script = deploy_dir / "build_cmd.sh"
+    build_lines = [line.strip() for line in
+                   build_script.read_text(encoding="utf-8").splitlines()
+                   if line.strip()]
+    if len(build_lines) < 2 or not build_lines[1].startswith("remoteconfig "):
+        raise SystemExit(
+            "Ambarella deploy script has no remoteconfig command: {}"
+            .format(build_script))
+    build_output = deploy_dir / "build_output"
+    remoteconfig_command = shlex.split(build_lines[1])
+    wrapped = (_container_command(
+        container, remoteconfig_command, build_output, env)
+        if container else remoteconfig_command)
+    _run(wrapped, cwd=None if container else build_output,
+         env=None if container else env)
+    build_command = ["make", "-C", str(build_output), "build"]
+    wrapped = (_container_command(container, build_command, workdir, env)
+               if container else build_command)
+    _run(wrapped, cwd=None if container else workdir,
+         env=None if container else env)
+    generated_flexibin = build_output / "flexidag0" / "flexibin0.bin"
+    packaged_flexibin = build_output / "flexibin" / "flexibin0.bin"
+    if not generated_flexibin.is_file():
+        raise SystemExit(
+            "Ambarella dynamic FlexiBin was not generated: {}".format(
+                generated_flexibin))
+    packaged_flexibin.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(generated_flexibin, packaged_flexibin)
+
+
 def _network_name(model, configured):
     value = str(configured or model.stem)
     value = value.replace(".", "_").replace("-", "_")
@@ -419,15 +875,44 @@ def convert(config_path, mode, workspace, output_dir, container=None, dry_run=Fa
     roi_x = input_cfg.get("roi_x", 9999)
     roi_y = input_cfg.get("roi_y", 9999)
     yuv420_flag = 1 if input_cfg.get("yuv420", False) else 0
+    resize_cfg = input_cfg.get("hardware_resize", {}) or {}
+    resize_enabled = bool(resize_cfg.get("enabled", False))
+    resize_dynamic = bool(resize_cfg.get("dynamic", False))
+    source_width = int(resize_cfg.get("max_width", 0) or 0)
+    source_height = int(resize_cfg.get("max_height", 0) or 0)
+    if resize_enabled:
+        if not yuv420_flag:
+            raise SystemExit(
+                "Ambarella input.hardware_resize requires input.yuv420=true")
+        if len(inputs) != 1 or len(shapes[0]) != 4 or shapes[0][1] != 3:
+            raise SystemExit(
+                "Ambarella input.hardware_resize requires one NCHW RGB model input")
+        if (source_width <= 0 or source_height <= 0 or
+                (source_width & 1) != 0 or (source_height & 1) != 0):
+            raise SystemExit(
+                "Ambarella input.hardware_resize max_width/max_height "
+                "must be positive even values")
+        if not resize_dynamic:
+            raise SystemExit(
+                "Ambarella input.hardware_resize currently requires dynamic=true")
+        model_height = int(shapes[0][2])
+        model_width = int(shapes[0][3])
+        if (model_width & 1) != 0 or (model_height & 1) != 0:
+            raise SystemExit(
+                "Ambarella input.hardware_resize requires an even-sized model input")
     # Let ADK generate the descriptor when YUV420 conversion is enabled so
     # it can expose the required Y and UV primary input buffers.
-    use_adk_descriptor = bool(yuv420_flag)
+    use_adk_descriptor = bool(yuv420_flag and not resize_enabled)
 
     print("Ambarella model:", model)
     print("Ambarella inputs:", ", ".join(
         "{}={}".format(name, shape) for name, shape in zip(input_names, shapes)))
     print("Ambarella outputs:", ", ".join(output_names))
     print("Ambarella FlexiDAG I/O mode:", io_mode)
+    if resize_enabled:
+        print("Ambarella dynamic hardware resize: <= {}x{} -> {}x{} "
+              "(single graph)".format(
+            source_width, source_height, model_width, model_height))
     print("Ambarella workdir:", workdir)
     print("Ambarella output:", requested_output)
     if container:
@@ -462,7 +947,12 @@ def convert(config_path, mode, workspace, output_dir, container=None, dry_run=Fa
         # graph descriptor and model must be present at the same path visible
         # inside the container.
         descriptor = workdir / (network + "_desc.json")
-        if not use_adk_descriptor:
+        if resize_enabled:
+            _yuv_resize_descriptor(
+                descriptor, network, input_names[0], output_names,
+                (source_width, source_height), (model_width, model_height),
+                input_cfg.get("scale", 255.0), dra_mode, dra_options)
+        elif not use_adk_descriptor:
             descriptor_inputs = []
             for name, shape in zip(input_names, shapes):
                 descriptor_inputs.append({
@@ -488,6 +978,22 @@ def convert(config_path, mode, workspace, output_dir, container=None, dry_run=Fa
     input_dirs = " ".join(str(calibration_dataset) for _ in inputs)
     input_dims = " ".join(",".join(str(dim) for dim in shape) for shape in shapes)
     input_layers = " ".join(input_names)
+    test_input_dirs = input_dirs
+    test_input_dims = input_dims
+    test_input_layers = input_layers
+    test_input_cf = str(input_cfg.get("color_format", 1))
+    test_input_scale = str(input_cfg.get("scale", 255.0))
+    effective_yuv420_flag = str(yuv420_flag)
+    if resize_enabled:
+        test_input_dirs = "{} {}".format(calibration_dataset, calibration_dataset)
+        test_input_dims = "1,1,{},{} 1,2,{},{}".format(
+            source_height, source_width, source_height // 2, source_width // 2)
+        test_input_layers = "{}_y {}_uv".format(input_names[0], input_names[0])
+        # Match CVTools' native Y and interleaved-UV input formats. The custom
+        # CVB descriptor performs scaling and NV12 conversion itself.
+        test_input_cf = "4 7"
+        test_input_scale = ""
+        effective_yuv420_flag = ""
     output_layers = " ".join(output_names)
     model_inside = workdir / "source" / model.name
     make_vars = [
@@ -502,13 +1008,13 @@ def convert(config_path, mode, workspace, output_dir, container=None, dry_run=Fa
         "USR_GRAPH_SURGERY_INPUT_DIM={}".format(input_dims),
         "USR_GRAPH_SURGERY_OUT_LAYER={}".format(output_layers),
         "USR_TEST_OUT_LAYER={}".format(output_layers),
-        "USR_TEST_INPUT_LAYER={}".format(input_layers),
-        "USR_TEST_INPUT_DIR={}".format(input_dirs),
-        "USR_TEST_INPUT_DRA_DIR={}".format(input_dirs),
-        "USR_TEST_INPUT_DIM={}".format(input_dims),
-        "USR_TEST_INPUT_CF={}".format(input_cfg.get("color_format", 1)),
-        "USR_TEST_INPUT_SCALE={}".format(input_cfg.get("scale", 255.0)),
-        "USR_INPUT_YUV420_FLAG={}".format(yuv420_flag),
+        "USR_TEST_INPUT_LAYER={}".format(test_input_layers),
+        "USR_TEST_INPUT_DIR={}".format(test_input_dirs),
+        "USR_TEST_INPUT_DRA_DIR={}".format(test_input_dirs),
+        "USR_TEST_INPUT_DIM={}".format(test_input_dims),
+        "USR_TEST_INPUT_CF={}".format(test_input_cf),
+        "USR_TEST_INPUT_SCALE={}".format(test_input_scale),
+        "USR_INPUT_YUV420_FLAG={}".format(effective_yuv420_flag),
         "USR_DRA_MODE={}".format(dra_mode),
         "USR_DRA_OPT={}".format(dra_options),
         "USR_BUB_FWK_DIR={}".format(framework),
@@ -537,6 +1043,10 @@ def convert(config_path, mode, workspace, output_dir, container=None, dry_run=Fa
          dry_run=dry_run)
     if dry_run:
         return
+    if resize_enabled:
+        _enable_dynamic_hardware_resize(
+            workdir, network, input_names[0], (model_width, model_height),
+            (source_width, source_height), container, env)
 
     requested_output.mkdir(parents=True, exist_ok=True)
     build_output = workdir / "out" / "deploy" / "build_output"

@@ -17,6 +17,14 @@ input:
   # Generate the two-plane Y/UV picinfo input and let ADK insert its native
   # NV12-to-RGB preprocessing node before the RGB ONNX graph.
   yuv420: true
+  # Compile VP dynamic NV12 resize and the detector into one FlexiBin. The
+  # network still receives 3328x1024; runtime PicInfo may describe any input
+  # up to this bound.
+  hardware_resize:
+    enabled: true
+    dynamic: true
+    max_width: 4096
+    max_height: 2160
   # Used only when io.mode is 1 (picinfo). 9999 selects a centered ROI.
   roi_scale: 0
   roi_x: 9999
