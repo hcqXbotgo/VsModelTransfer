@@ -4,7 +4,7 @@ adk_path: /opt/cvtools/sample_nn_diag/diags/onnx/yolo_v8_s_ox/../../../../adk
 framework_dir: dependencies/ambacv
 model: modes/soccer/model/yolov8n_detect-auxHM-seq-stack-3f_sperson_ball_goal_h3328_w3328_20260825_best_headcut_raw.onnx
 prefer_headcut: true
-network: soccer_yolov8_seq
+model_category: yolov8
 input:
   images: modes/soccer/datasets/calibration
   sample_count: 20

@@ -12,6 +12,7 @@ performed by ``prepare.py`` as part of the CVFlow build.
 """
 
 import argparse
+from datetime import datetime
 import json
 import os
 import re
@@ -289,7 +290,18 @@ def _sample_calibration_images(dataset, workdir, input_cfg, dry_run):
     return sampled_dir
 
 
-def _descriptor(path, network, inputs, outputs, dra_mode, dra_options):
+def _descriptor_outputs(outputs, output_dpa):
+    end = {}
+    for index, name in enumerate(outputs):
+        config = {"channels_last": False}
+        if output_dpa is not None:
+            config["dram_pitch_alignment"] = output_dpa[index]
+        end[name] = config
+    return end
+
+
+def _descriptor(path, network, inputs, outputs, dra_mode, dra_options,
+                output_dpa=None):
     begin = {}
     for item in inputs:
         begin[item["name"]] = {
@@ -299,7 +311,7 @@ def _descriptor(path, network, inputs, outputs, dra_mode, dra_options):
             "file": item["file"],
             "extn": ".bin",
         }
-    end = {name: {"channels_last": False} for name in outputs}
+    end = _descriptor_outputs(outputs, output_dpa)
     data = {
         network: {
             "type": "VP",
@@ -316,7 +328,8 @@ def _descriptor(path, network, inputs, outputs, dra_mode, dra_options):
 
 
 def _yuv_resize_descriptor(path, network, input_name, outputs, source_size,
-                           model_size, scale, dra_mode, dra_options):
+                           model_size, scale, dra_mode, dra_options,
+                           output_dpa=None):
     """Describe NV12 resize, color conversion, and the network as one graph."""
     source_width, source_height = source_size
     model_width, model_height = model_size
@@ -386,10 +399,7 @@ def _yuv_resize_descriptor(path, network, input_name, outputs, source_size,
         network: {
             "type": "VP",
             "begin": {input_name: {}},
-            "end": {
-                name: {"channels_last": False}
-                for name in outputs
-            },
+            "end": _descriptor_outputs(outputs, output_dpa),
             "attr": {
                 "cnngen_flags": "-dra mode={} -c {} ".format(
                     dra_mode, dra_options),
@@ -770,11 +780,33 @@ def _enable_dynamic_hardware_resize(workdir, network, input_name, model_size,
     shutil.copy2(generated_flexibin, packaged_flexibin)
 
 
-def _network_name(model, configured):
-    value = str(configured or model.stem)
-    value = value.replace(".", "_").replace("-", "_")
-    # ADK limits USR_NETWORK to 22 characters.
-    return value[:22]
+def _network_name(model_artifact_name):
+    # flexidag_schdr displays the embedded USR_NETWORK value. ADK limits that
+    # value to 22 characters, so keep it as a direct prefix of the canonical
+    # artifact name instead of maintaining a separate, unrelated label.
+    return Path(model_artifact_name).stem[:22]
+
+
+def _artifact_component(value, field):
+    value = str(value).strip().lower()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", value):
+        raise SystemExit(
+            "Ambarella {} must contain only letters, numbers, underscores, "
+            "or hyphens; got {!r}".format(field, value))
+    return value
+
+
+def _model_artifact_name(mode, model_category, width, height,
+                         resize_enabled, build_date=None):
+    mode = _artifact_component(mode, "mode")
+    category = _artifact_component(model_category, "model_category")
+    resize = "auto_resize" if resize_enabled else "no_auto_resize"
+    date = build_date or datetime.now().strftime("%Y%m%d")
+    if not re.fullmatch(r"\d{8}", str(date)):
+        raise SystemExit(
+            "Ambarella build date must use YYYYMMDD; got {!r}".format(date))
+    return "{}_{}_{}x{}_{}_{}.bin".format(
+        mode, category, width, height, resize, date)
 
 
 def convert(config_path, mode, workspace, output_dir, container=None, dry_run=False):
@@ -798,7 +830,6 @@ def convert(config_path, mode, workspace, output_dir, container=None, dry_run=Fa
     shapes = [_shape(item) for item in inputs]
     input_names = [item.name for item in inputs]
     output_names = [item.name for item in outputs]
-    network = _network_name(model, config.get("network"))
     workdir = root / "modes" / mode / "outputs" / "compile" / "ambarella" / "work"
     requested_output = _resolve(root, output_dir or config.get(
         "output_dir", "modes/{}/outputs/compile/ambarella".format(mode)))
@@ -900,6 +931,21 @@ def convert(config_path, mode, workspace, output_dir, container=None, dry_run=Fa
         if (model_width & 1) != 0 or (model_height & 1) != 0:
             raise SystemExit(
                 "Ambarella input.hardware_resize requires an even-sized model input")
+    else:
+        if not shapes or len(shapes[0]) != 4:
+            raise SystemExit(
+                "Ambarella artifact naming requires the first model input "
+                "to be a 4D tensor")
+        model_height = int(shapes[0][-2])
+        model_width = int(shapes[0][-1])
+    model_category = config.get("model_category")
+    if not model_category:
+        raise SystemExit(
+            "Ambarella model_category is required in {} (for example "
+            "model_category: yolov8)".format(config_path))
+    model_artifact_name = _model_artifact_name(
+        mode, model_category, model_width, model_height, resize_enabled)
+    network = _network_name(model_artifact_name)
     # Let ADK generate the descriptor when YUV420 conversion is enabled so
     # it can expose the required Y and UV primary input buffers.
     use_adk_descriptor = bool(yuv420_flag and not resize_enabled)
@@ -915,6 +961,9 @@ def convert(config_path, mode, workspace, output_dir, container=None, dry_run=Fa
             source_width, source_height, model_width, model_height))
     print("Ambarella workdir:", workdir)
     print("Ambarella output:", requested_output)
+    print("Ambarella compiled model:", requested_output / model_artifact_name)
+    print("Ambarella runtime label:", network,
+          "(22-character ADK limit)")
     if container:
         print("Ambarella container:", container)
     elif not Path(adk).exists() and not dry_run:
@@ -951,7 +1000,8 @@ def convert(config_path, mode, workspace, output_dir, container=None, dry_run=Fa
             _yuv_resize_descriptor(
                 descriptor, network, input_names[0], output_names,
                 (source_width, source_height), (model_width, model_height),
-                input_cfg.get("scale", 255.0), dra_mode, dra_options)
+                input_cfg.get("scale", 255.0), dra_mode, dra_options,
+                output_dpa)
         elif not use_adk_descriptor:
             descriptor_inputs = []
             for name, shape in zip(input_names, shapes):
@@ -962,7 +1012,7 @@ def convert(config_path, mode, workspace, output_dir, container=None, dry_run=Fa
                     "scale": input_cfg.get("scale", 255.0),
                 })
             _descriptor(descriptor, network, descriptor_inputs, output_names,
-                        dra_mode, dra_options)
+                        dra_mode, dra_options, output_dpa)
     else:
         descriptor = workdir / (network + "_desc.json")
 
@@ -1051,7 +1101,22 @@ def convert(config_path, mode, workspace, output_dir, container=None, dry_run=Fa
     requested_output.mkdir(parents=True, exist_ok=True)
     build_output = workdir / "out" / "deploy" / "build_output"
     artifacts = []
+    packaged_flexibin = build_output / "flexibin" / "flexibin0.bin"
+    if not packaged_flexibin.is_file():
+        candidates = sorted(build_output.rglob("flexibin0.bin"))
+        if len(candidates) != 1:
+            raise SystemExit(
+                "Ambarella build must produce exactly one final FlexiBin; "
+                "found {} under {}".format(len(candidates), build_output))
+        packaged_flexibin = candidates[0]
+    model_target = requested_output / model_artifact_name
+    shutil.copy2(packaged_flexibin, model_target)
+    artifacts.append(model_target)
     for source in sorted(build_output.rglob("*")):
+        # flexibin0.bin is an internal vendor name. Export the single final
+        # model above using the stable, descriptive artifact name.
+        if source.name == "flexibin0.bin":
+            continue
         if source.is_file() and (source.suffix in {".bin", ".sh", ".pdf", ".mnft", ".tbar"}
                                  or source.name.endswith(".ckpt.onnx")):
             target = requested_output / source.name

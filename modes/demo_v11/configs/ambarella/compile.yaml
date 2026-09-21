@@ -4,7 +4,7 @@ adk_path: /opt/cvtools/sample_nn_diag/diags/onnx/yolo_v8_s_ox/../../../../adk
 framework_dir: dependencies/ambacv
 model: modes/demo_v11/model/yolo11n_detect_sperson_ball_hoop_ballhoop_h1024_w3328_20260720_best_opset13_fp32_headcut_raw.onnx
 prefer_headcut: true
-network: demo_v11_yolov8
+model_category: yolov11
 input:
   images: modes/basketball/datasets/calibration/images
   sample_count: 20

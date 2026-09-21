@@ -128,8 +128,15 @@ ONNX -> graph_surgery(CVFlow) -> prepare.py(CNNGen/DRA) -> Task Composer -> Flex
 ./run.sh basketball quant --platform ambarella
 ```
 
-生成的 `ambapb.ckpt.onnx`、`flexibin*.bin`、`run*.sh` 和元数据位于
-`modes/<mode>/outputs/compile/ambarella/`。安霸 COCO `eval`、逐层 `compare` 尚未接入统一
+生成的 `ambapb.ckpt.onnx`、最终模型、`run*.sh` 和元数据位于
+`modes/<mode>/outputs/compile/ambarella/`。最终模型统一命名为
+`<模式名>_<模型类别>_<宽>x<高>_<auto_resize|no_auto_resize>_<YYYYMMDD>.bin`，例如
+`basketball_yolov8_3328x1024_auto_resize_20260921.bin`。模型类别由同一配置中的
+`model_category` 显式指定，尺寸取 ONNX 第一输入的逻辑宽高；日期为本次编译日期。
+`flexidag_schdr` 显示的运行时 label 使用该文件名（去掉 `.bin`）的前 22 个字符；这是
+CVTools 对 `USR_NETWORK` 的长度上限，不能容纳完整文件名，但 label 始终是文件名的直接
+前缀，不再由单独的 `network` 配置决定。
+安霸 COCO `eval`、逐层 `compare` 尚未接入统一
 入口，命令会明确提示使用 CVTools 的 ADES/板端脚本；板端产生的预测结果仍可导入现有 COCO
 评估工具。若宿主机未安装 CVTools 且未设置容器名，入口会直接报出启动容器的修复提示。
 
@@ -1301,7 +1308,7 @@ export AMBARELLA_CONTAINER=<RunContainer.sh 输出的容器名>
 ```
 
 转换器在容器内依次执行 `graph_surgery(CVFlow)`、`prepare.py`（CNNGen/DRA）和 Task
-Composer，最终把 `ambapb.ckpt.onnx`、`flexibin*.bin`、元数据及运行脚本复制到
+Composer，最终把 `ambapb.ckpt.onnx`、规范命名的 FlexiDAG 模型、元数据及运行脚本复制到
 `modes/basketball/outputs/compile/ambarella/`。`quant --platform ambarella` 是同一条
 CVFlow/DRA 编译链路的别名；安霸的 COCO `eval` 和逐层 `compare` 仍应使用 CVTools 的
 ADES/板端工具，统一入口会明确拒绝不兼容的评估请求。
